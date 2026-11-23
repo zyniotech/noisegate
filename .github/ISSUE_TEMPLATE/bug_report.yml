@@ -1,0 +1,38 @@
+name: Bug Report
+description: Report a bug in the NoiseGate browser extension.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      options:
+        - Chrome / Chromium
+        - Brave / Edge / Arc / Vivaldi
+        - Firefox
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NoiseGate Version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Navigate to YouTube Watch / Feed page...
+        2. Configure topic or rule setting...
+        3. Observe unexpected behavior...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs. Actual Behavior
+    validations:
+      required: true

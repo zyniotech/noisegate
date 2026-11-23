@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Suggest or Correct a Channel Entry
+    url: https://github.com/zyniotech/noisegate-lists/issues/new/choose
+    about: Channel classifications, topics, disclosures, and removals belong in zyniotech/noisegate-lists.

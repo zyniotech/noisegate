@@ -1,0 +1,18 @@
+! Title: AiSList Test Sample (Plain-Text)
+! Description: Small 12-channel plain-text test subset sampled from Override92/AiSList
+! Homepage: https://github.com/Override92/AiSList
+! License: CC BY-NC 4.0
+! Last Modified: 2026-11-22
+
+@SuperCatLeague
+@MastersOfProphecy
+@AiDreamMaker
+@AIDreamCreations
+@BattleAI-z3r
+@funnymeow1
+@Greenchickss
+@BabyTVGreenChick
+@CinebotComedy
+@MakeTechFuture
+@ClassicWorldStories
+@Lost-Factory-Archives

@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "listId": "aislist-test-sample",
+  "name": "AiSList Test Sample (25 Channels)",
+  "description": "Small curated test subset sampled from Override92/AiSList (blocklist + warnlist) for testing NoiseGate without loading the full upstream list.",
+  "homepage": "https://github.com/Override92/AiSList",
+  "license": "CC BY-NC 4.0 (Upstream AiSList Sample)",
+  "updatedAt": "2026-11-22T00:00:00Z",
+  "channels": {},
+  "handles": {
+    "@SuperCatLeague": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@MastersOfProphecy": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@AiDreamMaker": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@AIDreamCreations": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@BattleAI-z3r": {
+      "category": "synthetic-mass-upload",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@ChickofHonor-l": {
+      "category": "synthetic-mass-upload",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@ChickofHonor-3i": {
+      "category": "synthetic-mass-upload",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@ChickofHonor-w8v": {
+      "category": "synthetic-mass-upload",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@funnymeow1": {
+      "category": "content-farm",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@Funnymeow8": {
+      "category": "content-farm",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@Funnyyymeow": {
+      "category": "content-farm",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@Greenchickss": {
+      "category": "content-farm",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@BabyTVGreenChick": {
+      "category": "content-farm",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@WadwalSaab-f1k1l": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList blocklist for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_blocklist.txt"
+    },
+    "@CinebotComedy": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@MakeTechFuture": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@ClassicWorldStories": {
+      "category": "synthetic-mass-upload",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@Lost-Factory-Archives": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@OmegaClassicRecordsTV": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@AustraliaInsightTV": {
+      "category": "synthetic-mass-upload",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@CrisisReportAussie": {
+      "category": "synthetic-mass-upload",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@DigitalConsumer0": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@TheBeautifulGameExplainedd": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@TrumpetOfGlory": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    },
+    "@ToonOfficialYT": {
+      "category": "ai-synthetic",
+      "note": "Sampled from AiSList warnlist (medium confidence) for testing.",
+      "evidenceUrl": "https://github.com/Override92/AiSList/blob/main/AiSList/aislist_warnlist.txt"
+    }
+  }
+}

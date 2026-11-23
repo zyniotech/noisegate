@@ -1,0 +1,35 @@
+{
+  "name": "noisegate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Open-source browser extension that labels, dims, or hides YouTube channels using official synthetic disclosures, local rules, and open filter lists.",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox --mv3",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox --mv3",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox --mv3",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@wxt-dev/module-react": "^1.1.3",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0",
+    "wxt": "^0.20.6"
+  }
+}
