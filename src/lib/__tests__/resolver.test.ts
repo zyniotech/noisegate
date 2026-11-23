@@ -138,6 +138,38 @@ describe('3-layer & topic/signal conflict resolver', () => {
     expect(decision.observedYppSignals).toEqual(['ypp-memberships', 'ypp-super-thanks']);
   });
 
+  it('supports ypp-partner signal neutrally by default and applies monetizedAction when enabled', () => {
+    const profile: ChannelProfile = {
+      channelKey: 'UCHenwyTestChannel00000001',
+      observedYouTubeCategories: { Gaming: 2 },
+      observedTopics: ['gaming'],
+      yppSignals: ['ypp-partner'],
+      monetizationInspected: true,
+      paidPromotionVideoIds: [],
+      lastObservedAt: '2026-11-23T00:00:00Z',
+    };
+
+    const neutral = resolveDecision({
+      ref: { channelId: 'UCHenwyTestChannel00000001', handle: 'henwy' },
+      settings: BASE_SETTINGS,
+      listMatches: [],
+      channelProfile: profile,
+    });
+    expect(neutral.action).toBe('none');
+    expect(neutral.observedYppSignals).toEqual(['ypp-partner']);
+
+    const labeled = resolveDecision({
+      ref: { channelId: 'UCHenwyTestChannel00000001', handle: 'henwy' },
+      settings: { ...BASE_SETTINGS, monetizedAction: 'label' },
+      listMatches: [],
+      channelProfile: profile,
+    });
+    expect(labeled.action).toBe('label');
+    expect(labeled.origin).toBe('signal');
+    expect(labeled.category).toBe('ypp-monetized');
+    expect(labeled.sourceName).toBe('Partner (Monetized)');
+  });
+
   it('labels or dims Paid Promotion when present on the video', () => {
     const profile: ChannelProfile = {
       channelKey: 'UC_x5XG1OV2P6uZZ5FSM9Ttw',

@@ -16,7 +16,7 @@ NoiseGate is an MIT-licensed Manifest V3 browser extension for Chrome, Edge, and
    Categorizes channels under 12 neutral topics (`Science`, `Technology`, `Education`, `Gaming`, `Music`, `Entertainment`, etc.) from YouTube metadata, local tags, or open Topic Directories (`Pass | Label | Dim | Hide`).
 
 2. **Official YouTube Disclosures & Partner Signals**
-   YouTube only displays its "Altered or synthetic content" label inside Watch pages, and Paid Promotion disclosures only per video. NoiseGate detects those official disclosures plus verifiable public YouTube Partner Program features (`Memberships`, `Super Thanks`, `Super Chat`, `Shopping`) without ever guessing monetization from ads.
+   YouTube only displays its "Altered or synthetic content" label inside Watch pages, and Paid Promotion disclosures only per video. NoiseGate detects those official disclosures plus verifiable public YouTube Partner Program signals (`Partner`, `Memberships`, `Super Thanks`, `Super Chat`, `Shopping`) without ever guessing monetization from ads or claiming a channel is unmonetized.
 
 3. **One-Click Local Rules**
    Hover over any YouTube video card or use the Watch-page control to assign **Label**, **Dim**, **Hide**, or **Trust**. Local rules live in `storage.local`, export to plain JSON, and override every topic rule and subscribed list.

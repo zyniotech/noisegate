@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGitHubSubmissionUrl,
   formatMonetizationSummary,
+  hasObservedYppSignals,
   mapYouTubeCategoryToTopic,
+  normalizeObservableSignal,
+  normalizeYppSignal,
+  YPP_SIGNAL_LABELS,
 } from '../taxonomy';
 
 describe('taxonomy, monetization formatting & GitHub deep-links', () => {
@@ -14,12 +18,30 @@ describe('taxonomy, monetization formatting & GitHub deep-links', () => {
     expect(mapYouTubeCategoryToTopic('Unterhaltung')).toBe('entertainment');
   });
 
-  it('formats YPP monetization signals factually without assumptions', () => {
-    expect(formatMonetizationSummary([], false)).toBe('Not yet inspected');
-    expect(formatMonetizationSummary([], true)).toBe('No public YPP signals observed');
+  it('normalizes ypp-partner alongside concrete YPP signals', () => {
+    expect(YPP_SIGNAL_LABELS['ypp-partner']).toBe('Partner (Monetized)');
+    expect(normalizeYppSignal('ypp-partner')).toBe('ypp-partner');
+    expect(normalizeYppSignal(' YPP-MEMBERSHIPS ')).toBe('ypp-memberships');
+    expect(normalizeObservableSignal('ypp-partner')).toBe('ypp-partner');
+    expect(hasObservedYppSignals([])).toBe(false);
+    expect(hasObservedYppSignals(undefined)).toBe(false);
+    expect(hasObservedYppSignals(['ypp-partner'])).toBe(true);
+    expect(hasObservedYppSignals(['ypp-memberships'])).toBe(true);
+  });
+
+  it('formats YPP monetization signals factually without false non-monetized claims', () => {
+    expect(formatMonetizationSummary([], false)).toBe('Not yet inspected on Watch or Channel page');
+    expect(formatMonetizationSummary([], true)).toBe('YPP status not publicly shown');
+    expect(formatMonetizationSummary(['ypp-partner'], true)).toBe('YPP: Monetized (Partner)');
     expect(formatMonetizationSummary(['ypp-memberships', 'ypp-super-thanks'], true)).toBe(
-      'YPP signals: Memberships, Super Thanks',
+      'YPP: Monetized (Memberships, Super Thanks)',
     );
+    expect(
+      formatMonetizationSummary(['ypp-partner', 'ypp-super-thanks', 'ypp-memberships'], true),
+    ).toBe('YPP: Monetized (Memberships, Super Thanks)');
+    expect(
+      formatMonetizationSummary(['ypp-memberships', 'ypp-memberships', 'ypp-shopping'], true),
+    ).toBe('YPP: Monetized (Memberships, Shopping)');
   });
 
   it('builds valid prefilled GitHub Issue submission URLs', () => {
@@ -33,7 +55,7 @@ describe('taxonomy, monetization formatting & GitHub deep-links', () => {
       },
       {
         topics: ['technology', 'education'],
-        yppSignals: ['ypp-memberships'],
+        yppSignals: ['ypp-partner', 'ypp-memberships'],
       },
     );
 
@@ -42,7 +64,7 @@ describe('taxonomy, monetization formatting & GitHub deep-links', () => {
     expect(parsed.searchParams.get('channel_id')).toBe('UC_x5XG1OV2P6uZZ5FSM9Ttw');
     expect(parsed.searchParams.get('channel_handle')).toBe('@GoogleDevelopers');
     expect(parsed.searchParams.get('topics')).toBe('technology, education');
-    expect(parsed.searchParams.get('signals')).toBe('ypp-memberships');
+    expect(parsed.searchParams.get('signals')).toBe('ypp-partner, ypp-memberships');
   });
 
   it('overwrites wrong template params, uses handle evidence fallback, and maps raw categories cleanly', () => {

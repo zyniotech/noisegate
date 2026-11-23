@@ -8,8 +8,10 @@ import {
 import {
   buildGitHubSubmissionUrl,
   formatMonetizationSummary,
+  hasObservedYppSignals,
   TOPIC_LIST,
   TOPICS,
+  YPP_SIGNAL_LABELS,
 } from './taxonomy';
 import type {
   CategoryId,
@@ -67,7 +69,7 @@ const POPOVER_CSS = `
 
   .ng-panel {
     position: fixed;
-    width: 332px;
+    width: 348px;
     max-width: calc(100vw - 24px);
     max-height: calc(100vh - 24px);
     overflow-y: auto;
@@ -79,8 +81,8 @@ const POPOVER_CSS = `
     color: var(--ng-fg);
     box-shadow:
       inset 0 1px 0 var(--ng-top-highlight),
-      0 22px 48px -12px rgba(0, 0, 0, 0.62),
-      0 4px 12px rgba(0, 0, 0, 0.28);
+      0 22px 48px -12px var(--ng-drop-shadow),
+      0 4px 12px var(--ng-drop-shadow-sm);
     pointer-events: auto;
     transform-origin: var(--ng-origin, top right);
     animation: ng-enter 140ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
@@ -121,6 +123,13 @@ const POPOVER_CSS = `
     }
   }
 
+  @media (prefers-contrast: more) {
+    .ng-panel {
+      background: var(--ng-bg-solid);
+      border-color: var(--ng-border-focus);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .ng-panel,
     .ng-panel[data-closing="true"] {
@@ -131,32 +140,50 @@ const POPOVER_CSS = `
 
   .ng-panel[data-theme="dark"] {
     --ng-bg-solid: #0f1218;
-    --ng-bg-translucent: rgba(14, 17, 24, 0.96);
-    --ng-bg-subtle: rgba(24, 29, 39, 0.9);
-    --ng-bg-hover: rgba(36, 43, 57, 0.96);
+    --ng-bg-translucent: rgba(15, 18, 26, 0.96);
+    --ng-bg-subtle: rgba(255, 255, 255, 0.045);
+    --ng-bg-hover: rgba(255, 255, 255, 0.095);
+    --ng-segment-track: rgba(7, 9, 13, 0.72);
+    --ng-segment-active: #1f2737;
     --ng-border: rgba(255, 255, 255, 0.13);
+    --ng-border-subtle: rgba(255, 255, 255, 0.08);
     --ng-top-highlight: rgba(255, 255, 255, 0.09);
-    --ng-border-focus: rgba(248, 250, 252, 0.62);
+    --ng-border-focus: rgba(248, 250, 252, 0.72);
+    --ng-drop-shadow: rgba(0, 0, 0, 0.65);
+    --ng-drop-shadow-sm: rgba(0, 0, 0, 0.32);
     --ng-fg: #f3f4f6;
-    --ng-fg-muted: #94a3b8;
-    --ng-fg-dim: #94a3b8;
+    --ng-fg-muted: #b6c2d2;
+    --ng-fg-dim: #9aa7b8;
     --ng-link: #cbd5e1;
     --ng-danger: #f87171;
+    --ng-positive: #34d399;
+    --ng-positive-bg: rgba(16, 185, 129, 0.13);
+    --ng-positive-border: rgba(52, 211, 153, 0.30);
+    --ng-input-bg: #131823;
   }
 
   .ng-panel[data-theme="light"] {
     --ng-bg-solid: #ffffff;
     --ng-bg-translucent: rgba(255, 255, 255, 0.97);
-    --ng-bg-subtle: #f4f5f7;
-    --ng-bg-hover: #e5e9f0;
+    --ng-bg-subtle: #f4f6f9;
+    --ng-bg-hover: #e2e8f0;
+    --ng-segment-track: #edf1f5;
+    --ng-segment-active: #ffffff;
     --ng-border: rgba(15, 23, 42, 0.14);
-    --ng-top-highlight: rgba(255, 255, 255, 0.8);
-    --ng-border-focus: rgba(15, 23, 42, 0.56);
+    --ng-border-subtle: rgba(15, 23, 42, 0.08);
+    --ng-top-highlight: rgba(255, 255, 255, 0.9);
+    --ng-border-focus: rgba(15, 23, 42, 0.65);
+    --ng-drop-shadow: rgba(15, 23, 42, 0.18);
+    --ng-drop-shadow-sm: rgba(15, 23, 42, 0.08);
     --ng-fg: #0f172a;
     --ng-fg-muted: #475569;
-    --ng-fg-dim: #475569;
+    --ng-fg-dim: #526075;
     --ng-link: #1e293b;
     --ng-danger: #b91c1c;
+    --ng-positive: #065f46;
+    --ng-positive-bg: rgba(4, 120, 87, 0.09);
+    --ng-positive-border: rgba(4, 120, 87, 0.28);
+    --ng-input-bg: #ffffff;
   }
 
   .ng-header {
@@ -170,20 +197,45 @@ const POPOVER_CSS = `
 
   .ng-title-group {
     min-width: 0;
+    flex: 1;
+  }
+
+  .ng-title-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
   }
 
   .ng-channel-name {
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
     line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
+  .ng-state-tag {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 4px;
+    border: 1px solid var(--ng-border);
+    border-left: 2px solid var(--state-accent, var(--ng-fg-muted));
+    background: var(--ng-bg-subtle);
+    color: var(--ng-fg);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
   .ng-channel-meta {
-    margin-top: 2px;
+    margin-top: 3px;
     font-size: 11px;
     color: var(--ng-fg-muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -194,9 +246,9 @@ const POPOVER_CSS = `
 
   .ng-close-btn {
     flex-shrink: 0;
-    width: 24px;
-    height: 24px;
-    border: none;
+    width: 26px;
+    height: 26px;
+    border: 1px solid transparent;
     border-radius: 6px;
     background: transparent;
     color: var(--ng-fg-muted);
@@ -204,11 +256,12 @@ const POPOVER_CSS = `
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: background-color 110ms ease, color 110ms ease, transform 90ms ease-out;
+    transition: background-color 110ms ease, color 110ms ease, border-color 110ms ease, transform 90ms ease-out;
   }
 
   .ng-close-btn:hover {
     background: var(--ng-bg-hover);
+    border-color: var(--ng-border-subtle);
     color: var(--ng-fg);
   }
 
@@ -220,7 +273,8 @@ const POPOVER_CSS = `
   .ng-profile-topic-select:focus-visible,
   .ng-clear-btn:focus-visible,
   .ng-evidence-link:focus-visible,
-  .ng-community-link:focus-visible {
+  .ng-community-link:focus-visible,
+  .ng-seg-btn:focus-visible {
     outline: 2px solid var(--ng-border-focus);
     outline-offset: 1px;
   }
@@ -232,14 +286,14 @@ const POPOVER_CSS = `
     gap: 11px;
   }
 
-  .ng-profile-box {
+  .ng-group-box {
     border: 1px solid var(--ng-border);
     border-radius: 7px;
     background: var(--ng-bg-subtle);
     padding: 8px 10px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 7px;
   }
 
   .ng-profile-row {
@@ -255,8 +309,13 @@ const POPOVER_CSS = `
     display: flex;
     align-items: center;
     gap: 6px;
-    color: var(--ng-fg-muted);
+    color: var(--ng-fg);
+    font-weight: 500;
     min-width: 0;
+  }
+
+  .ng-profile-left svg {
+    color: var(--ng-fg-muted);
   }
 
   .ng-profile-left span {
@@ -266,25 +325,27 @@ const POPOVER_CSS = `
   }
 
   .ng-profile-topic-select {
-    height: 24px;
-    padding: 0 6px;
+    height: 26px;
+    padding: 0 7px;
     border-radius: 5px;
     border: 1px solid var(--ng-border);
-    background: var(--ng-bg-solid);
+    background: var(--ng-input-bg);
     color: var(--ng-fg);
-    font-size: 11px;
-    max-width: 148px;
+    font-size: 11.5px;
+    max-width: 156px;
   }
 
   .ng-signals {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    padding-top: 4px;
+    border-top: 1px solid var(--ng-border-subtle);
   }
 
   .ng-signal-item {
     border-left: 2px solid var(--item-accent, #94a3b8);
-    padding: 4px 0 4px 9px;
+    padding: 3px 0 3px 9px;
     font-size: 11.5px;
     line-height: 1.4;
   }
@@ -324,6 +385,73 @@ const POPOVER_CSS = `
     text-decoration: underline;
   }
 
+  .ng-monetization-box {
+    border: 1px solid var(--ng-border);
+    border-radius: 7px;
+    background: var(--ng-bg-subtle);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .ng-monetization-box.is-positive {
+    border-color: var(--ng-positive-border);
+    background: var(--ng-positive-bg);
+  }
+
+  .ng-monetization-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--ng-fg);
+  }
+
+  .ng-monetization-box.is-positive .ng-monetization-head {
+    color: var(--ng-positive);
+  }
+
+  .ng-monetization-sub {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--ng-fg-muted);
+  }
+
+  .ng-ypp-features {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+  }
+
+  .ng-ypp-feature-tag {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 4px;
+    border: 1px solid var(--ng-positive-border);
+    background: var(--ng-bg-solid);
+    color: var(--ng-positive);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .ng-promo-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    padding-top: 5px;
+    border-top: 1px solid var(--ng-border-subtle);
+    font-size: 11px;
+    color: var(--ng-fg-muted);
+  }
+
   .ng-section-row {
     display: flex;
     align-items: center;
@@ -345,59 +473,75 @@ const POPOVER_CSS = `
     color: var(--ng-fg-dim);
   }
 
-  .ng-actions-grid {
+  .ng-segmented-bar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 2px;
+    padding: 3px;
+    border-radius: 7px;
+    border: 1px solid var(--ng-border);
+    background: var(--ng-segment-track);
   }
 
-  .ng-action-btn {
+  .ng-seg-btn {
     appearance: none;
-    border: 1px solid var(--ng-border);
-    border-radius: 7px;
-    background: var(--ng-bg-subtle);
-    color: var(--ng-fg);
-    padding: 8px 4px;
-    font-size: 11.5px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--ng-fg-muted);
+    padding: 7px 2px;
+    font-size: 11px;
     font-weight: 500;
+    line-height: 1.1;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 4px;
     cursor: pointer;
-    box-shadow: inset 0 1px 0 var(--ng-top-highlight);
-    transition: background-color 110ms ease, border-color 110ms ease, color 110ms ease, transform 90ms ease-out;
+    white-space: nowrap;
+    transition: background-color 110ms cubic-bezier(0.23, 1, 0.32, 1), border-color 110ms cubic-bezier(0.23, 1, 0.32, 1), color 110ms cubic-bezier(0.23, 1, 0.32, 1), transform 90ms cubic-bezier(0.23, 1, 0.32, 1);
   }
 
-  .ng-action-btn:hover:not(:disabled) {
+  .ng-seg-btn:hover:not(:disabled) {
     background: var(--ng-bg-hover);
+    color: var(--ng-fg);
   }
 
-  .ng-action-btn:disabled,
+  .ng-seg-btn:disabled,
   .ng-clear-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .ng-action-btn:active:not(:disabled) {
+  .ng-seg-btn:active:not(:disabled) {
     transform: scale(0.95);
   }
 
-  .ng-action-btn:focus-visible {
-    outline: 2px solid var(--ng-border-focus);
-    outline-offset: 1px;
+  .ng-seg-btn[data-active="true"] {
+    border-color: var(--btn-accent, var(--ng-border));
+    background: var(--ng-segment-active);
+    color: var(--btn-accent-fg, var(--ng-fg));
+    font-weight: 600;
+    box-shadow: inset 0 1px 0 var(--ng-top-highlight), 0 1px 2px var(--ng-drop-shadow-sm);
   }
 
-  .ng-action-btn[data-active="true"] {
-    border-color: var(--btn-accent, #f8fafc);
-    background: var(--ng-bg-hover);
-    color: var(--btn-accent-fg, var(--btn-accent, #f8fafc));
+  .ng-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
   }
 
   .ng-field {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
+  }
+
+  .ng-field-label {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--ng-fg-muted);
   }
 
   .ng-select,
@@ -407,11 +551,16 @@ const POPOVER_CSS = `
     padding: 0 9px;
     border-radius: 6px;
     border: 1px solid var(--ng-border);
-    background: var(--ng-bg-subtle);
+    background: var(--ng-input-bg);
     color: var(--ng-fg);
     font-size: 12px;
     outline: none;
     transition: border-color 120ms ease;
+  }
+
+  .ng-input::placeholder {
+    color: var(--ng-fg-dim);
+    opacity: 1;
   }
 
   .ng-select:focus,
@@ -424,7 +573,7 @@ const POPOVER_CSS = `
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding-top: 6px;
+    padding-top: 8px;
     border-top: 1px solid var(--ng-border);
     font-size: 11px;
     flex-wrap: wrap;
@@ -434,7 +583,7 @@ const POPOVER_CSS = `
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    color: var(--ng-fg-muted);
+    color: var(--ng-link);
     text-decoration: none;
     font-weight: 500;
     border-radius: 4px;
@@ -443,6 +592,7 @@ const POPOVER_CSS = `
 
   .ng-community-link:hover {
     color: var(--ng-fg);
+    text-decoration: underline;
   }
 
   .ng-footer {
@@ -450,7 +600,7 @@ const POPOVER_CSS = `
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding-top: 6px;
+    padding-top: 8px;
     border-top: 1px solid var(--ng-border);
   }
 
@@ -461,12 +611,12 @@ const POPOVER_CSS = `
 
   .ng-clear-btn {
     appearance: none;
-    border: none;
+    border: 1px solid transparent;
     background: transparent;
     color: var(--ng-danger);
     font-size: 11.5px;
     font-weight: 500;
-    padding: 4px 6px;
+    padding: 4px 7px;
     border-radius: 5px;
     cursor: pointer;
     transition: background-color 110ms ease, transform 90ms ease-out;
@@ -480,6 +630,22 @@ const POPOVER_CSS = `
     transform: scale(0.96);
   }
 `;
+
+function detectYouTubeDarkMode(): boolean {
+  if (
+    document.documentElement.hasAttribute('dark') ||
+    Boolean(document.querySelector('ytd-app[dark], ytm-app[dark], body[dark]'))
+  ) {
+    return true;
+  }
+  if (document.documentElement.hasAttribute('light')) {
+    return false;
+  }
+  if (document.querySelector('ytd-app, ytm-app')) {
+    return false;
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
 
 export class InPagePopoverManager {
   private host: HTMLDivElement | null = null;
@@ -588,11 +754,7 @@ export class InPagePopoverManager {
     this.lastAnchor = ctx.anchor;
 
     const shadow = this.ensureHost();
-
-    const hasYtApp = Boolean(document.querySelector('ytd-app'));
-    const isDark = hasYtApp
-      ? document.documentElement.hasAttribute('dark')
-      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = detectYouTubeDarkMode();
 
     const backdrop = document.createElement('div');
     backdrop.className = 'ng-backdrop';
@@ -616,6 +778,9 @@ export class InPagePopoverManager {
     const titleGroup = document.createElement('div');
     titleGroup.className = 'ng-title-group';
 
+    const titleRow = document.createElement('div');
+    titleRow.className = 'ng-title-row';
+
     const nameEl = document.createElement('div');
     nameEl.className = 'ng-channel-name';
     nameEl.textContent =
@@ -623,6 +788,22 @@ export class InPagePopoverManager {
       formatHandle(ctx.ref.handle) ||
       ctx.ref.channelId ||
       'YouTube Channel';
+    titleRow.appendChild(nameEl);
+
+    if (ctx.decision.action !== 'none') {
+      const stateTag = document.createElement('span');
+      stateTag.className = 'ng-state-tag';
+      const stateAccent =
+        ctx.decision.action === 'allow'
+          ? isDark
+            ? '#34d399'
+            : '#065f46'
+          : getCategoryMeta(ctx.decision.category).accentColor;
+      stateTag.style.setProperty('--state-accent', stateAccent);
+      stateTag.textContent =
+        ctx.decision.action === 'allow' ? 'Trusted' : ctx.decision.primaryLabel;
+      titleRow.appendChild(stateTag);
+    }
 
     const metaParts: string[] = [];
     const dispHandle = formatHandle(ctx.ref.handle);
@@ -633,7 +814,7 @@ export class InPagePopoverManager {
     metaEl.className = 'ng-channel-meta';
     metaEl.textContent = metaParts.join(' · ') || 'Channel ID pending';
 
-    titleGroup.appendChild(nameEl);
+    titleGroup.appendChild(titleRow);
     titleGroup.appendChild(metaEl);
 
     const closeBtn = document.createElement('button');
@@ -651,35 +832,8 @@ export class InPagePopoverManager {
     const body = document.createElement('div');
     body.className = 'ng-body';
 
-    const profileBox = document.createElement('div');
-    profileBox.className = 'ng-profile-box';
-
-    const monetizeRow = document.createElement('div');
-    monetizeRow.className = 'ng-profile-row';
-    const monetizeLeft = document.createElement('div');
-    monetizeLeft.className = 'ng-profile-left';
-    monetizeLeft.appendChild(createPhosphorSvg('currency-circle-dollar', 13));
-    const monetizeText = document.createElement('span');
-    monetizeText.textContent = formatMonetizationSummary(
-      ctx.decision.observedYppSignals,
-      ctx.decision.monetizationInspected,
-    );
-    monetizeLeft.appendChild(monetizeText);
-    monetizeRow.appendChild(monetizeLeft);
-    profileBox.appendChild(monetizeRow);
-
-    if (ctx.decision.hasPaidPromotion) {
-      const promoRow = document.createElement('div');
-      promoRow.className = 'ng-profile-row';
-      const promoLeft = document.createElement('div');
-      promoLeft.className = 'ng-profile-left';
-      promoLeft.appendChild(createPhosphorSvg('megaphone', 13));
-      const promoTxt = document.createElement('span');
-      promoTxt.textContent = 'Paid promotion disclosed by creator';
-      promoLeft.appendChild(promoTxt);
-      promoRow.appendChild(promoLeft);
-      profileBox.appendChild(promoRow);
-    }
+    const statusGroup = document.createElement('div');
+    statusGroup.className = 'ng-group-box';
 
     const topicRow = document.createElement('div');
     topicRow.className = 'ng-profile-row';
@@ -715,9 +869,7 @@ export class InPagePopoverManager {
 
     topicRow.appendChild(topicLeft);
     topicRow.appendChild(topicSelect);
-    profileBox.appendChild(topicRow);
-
-    body.appendChild(profileBox);
+    statusGroup.appendChild(topicRow);
 
     if (
       ctx.decision.listMatches.length > 0 ||
@@ -729,7 +881,7 @@ export class InPagePopoverManager {
       if (ctx.decision.hasOfficialDisclosure) {
         const item = document.createElement('div');
         item.className = 'ng-signal-item';
-        item.style.setProperty('--item-accent', '#38bdf8');
+        item.style.setProperty('--item-accent', isDark ? '#38bdf8' : '#0284c7');
 
         const head = document.createElement('div');
         head.className = 'ng-signal-head';
@@ -785,9 +937,57 @@ export class InPagePopoverManager {
       }
 
       if (signalsWrap.childElementCount > 0) {
-        body.appendChild(signalsWrap);
+        statusGroup.appendChild(signalsWrap);
       }
     }
+
+    body.appendChild(statusGroup);
+
+    const hasYpp = hasObservedYppSignals(ctx.decision.observedYppSignals);
+    const monetizeBox = document.createElement('div');
+    monetizeBox.className = hasYpp ? 'ng-monetization-box is-positive' : 'ng-monetization-box';
+
+    const monetizeHead = document.createElement('div');
+    monetizeHead.className = 'ng-monetization-head';
+    monetizeHead.appendChild(createPhosphorSvg('currency-circle-dollar', 14));
+    const monetizeTitle = document.createElement('span');
+    monetizeTitle.textContent = formatMonetizationSummary(
+      ctx.decision.observedYppSignals,
+      ctx.decision.monetizationInspected,
+    );
+    monetizeHead.appendChild(monetizeTitle);
+    monetizeBox.appendChild(monetizeHead);
+
+    if (hasYpp) {
+      const featuresRow = document.createElement('div');
+      featuresRow.className = 'ng-ypp-features';
+      for (const sig of ctx.decision.observedYppSignals) {
+        const tag = document.createElement('span');
+        tag.className = 'ng-ypp-feature-tag';
+        tag.textContent = YPP_SIGNAL_LABELS[sig] ?? sig;
+        featuresRow.appendChild(tag);
+      }
+      monetizeBox.appendChild(featuresRow);
+    } else {
+      const monetizeSub = document.createElement('div');
+      monetizeSub.className = 'ng-monetization-sub';
+      monetizeSub.textContent = ctx.decision.monetizationInspected
+        ? 'YPP features not shown on this view'
+        : 'Open a Watch or Channel page to inspect YPP features';
+      monetizeBox.appendChild(monetizeSub);
+    }
+
+    if (ctx.decision.hasPaidPromotion) {
+      const promoRow = document.createElement('div');
+      promoRow.className = 'ng-promo-row';
+      promoRow.appendChild(createPhosphorSvg('megaphone', 13));
+      const promoTxt = document.createElement('span');
+      promoTxt.textContent = 'Paid promotion disclosed by creator';
+      promoRow.appendChild(promoTxt);
+      monetizeBox.appendChild(promoRow);
+    }
+
+    body.appendChild(monetizeBox);
 
     const defaultCategory: CategoryId =
       ctx.decision.origin === 'local' &&
@@ -795,12 +995,18 @@ export class InPagePopoverManager {
         ? (ctx.decision.category as CategoryId)
         : 'ai-synthetic';
 
-    const fieldWrap = document.createElement('div');
-    fieldWrap.className = 'ng-field';
+    const fieldGroup = document.createElement('div');
+    fieldGroup.className = 'ng-field-group';
 
+    const catField = document.createElement('div');
+    catField.className = 'ng-field';
+    const catLabel = document.createElement('label');
+    catLabel.className = 'ng-field-label';
+    catLabel.htmlFor = 'ng-pop-category';
+    catLabel.textContent = 'Rule category';
     const catSelect = document.createElement('select');
+    catSelect.id = 'ng-pop-category';
     catSelect.className = 'ng-select';
-    catSelect.setAttribute('aria-label', 'Category');
     for (const cat of SELECTABLE_CATEGORIES) {
       const opt = document.createElement('option');
       opt.value = cat.id;
@@ -808,33 +1014,45 @@ export class InPagePopoverManager {
       if (cat.id === defaultCategory) opt.selected = true;
       catSelect.appendChild(opt);
     }
+    catField.appendChild(catLabel);
+    catField.appendChild(catSelect);
 
+    const noteField = document.createElement('div');
+    noteField.className = 'ng-field';
+    const noteLabel = document.createElement('label');
+    noteLabel.className = 'ng-field-label';
+    noteLabel.htmlFor = 'ng-pop-note';
+    noteLabel.textContent = 'Local note';
     const noteInput = document.createElement('input');
+    noteInput.id = 'ng-pop-note';
     noteInput.type = 'text';
     noteInput.className = 'ng-input';
-    noteInput.placeholder = 'Optional note (stored locally)...';
-    noteInput.setAttribute('aria-label', 'Optional local note');
+    noteInput.placeholder = 'Optional note stored locally';
     noteInput.maxLength = 180;
     noteInput.value = ctx.decision.origin === 'local' ? ctx.decision.note ?? '' : '';
+    noteField.appendChild(noteLabel);
+    noteField.appendChild(noteInput);
 
-    fieldWrap.appendChild(catSelect);
-    fieldWrap.appendChild(noteInput);
+    fieldGroup.appendChild(catField);
+    fieldGroup.appendChild(noteField);
 
     const actionsSection = document.createElement('div');
     const secRow = document.createElement('div');
     secRow.className = 'ng-section-row';
     const secLabel = document.createElement('div');
     secLabel.className = 'ng-section-label';
-    secLabel.textContent = '1-Click Local Action';
+    secLabel.textContent = '1-Click Local Rule';
     const kbdHint = document.createElement('div');
     kbdHint.className = 'ng-kbd-hint';
-    kbdHint.textContent = '1-4 · Esc';
+    kbdHint.textContent = '0-4 · Esc';
     secRow.appendChild(secLabel);
     secRow.appendChild(kbdHint);
     actionsSection.appendChild(secRow);
 
-    const grid = document.createElement('div');
-    grid.className = 'ng-actions-grid';
+    const segmentedBar = document.createElement('div');
+    segmentedBar.className = 'ng-segmented-bar';
+    segmentedBar.setAttribute('role', 'group');
+    segmentedBar.setAttribute('aria-label', '1-Click Local Rule');
 
     const statusText = document.createElement('span');
     statusText.className = 'ng-status-text';
@@ -842,19 +1060,6 @@ export class InPagePopoverManager {
       ctx.decision.origin === 'local'
         ? `Local rule active (${ctx.decision.action === 'allow' ? 'Trust' : ctx.decision.action})`
         : 'Local rules always override lists';
-
-    const actionDefs: Array<{
-      action: LocalRuleAction;
-      label: string;
-      icon: 'tag' | 'eye-slash' | 'prohibit' | 'shield-check';
-      accentDark: string;
-      accentLight: string;
-    }> = [
-      { action: 'label', label: 'Label', icon: 'tag', accentDark: '#fbbf24', accentLight: '#b45309' },
-      { action: 'dim', label: 'Dim', icon: 'eye-slash', accentDark: '#fb923c', accentLight: '#c2410c' },
-      { action: 'hide', label: 'Hide', icon: 'prohibit', accentDark: '#f87171', accentLight: '#b91c1c' },
-      { action: 'allow', label: 'Trust', icon: 'shield-check', accentDark: '#34d399', accentLight: '#047857' },
-    ];
 
     const currentLocalAction =
       ctx.decision.origin === 'local' ? ctx.decision.action : undefined;
@@ -895,30 +1100,79 @@ export class InPagePopoverManager {
       }
     };
 
-    for (const def of actionDefs) {
+    const triggerClear = async () => {
+      if (isSubmitting) return;
+      if (ctx.decision.origin !== 'local') {
+        if (ctx.decision.action === 'none') {
+          this.close(true);
+        } else {
+          statusText.textContent = 'Active via list or signal; choose Trust to override';
+        }
+        return;
+      }
+      setBusyState(true);
+      statusText.textContent = 'Removing...';
+      try {
+        await ctx.onClear(ctx.ref);
+        if (this.openToken === myToken) {
+          this.close(true);
+        }
+      } catch {
+        if (this.openToken === myToken) {
+          statusText.textContent = 'Could not remove rule';
+          setBusyState(false);
+        }
+      }
+    };
+
+    const segmentDefs: Array<{
+      id: 'pass' | LocalRuleAction;
+      label: string;
+      icon: 'check' | 'tag' | 'eye-slash' | 'prohibit' | 'shield-check';
+      accentDark: string;
+      accentLight: string;
+    }> = [
+      { id: 'pass', label: 'Pass', icon: 'check', accentDark: '#e2e8f0', accentLight: '#0f172a' },
+      { id: 'label', label: 'Label', icon: 'tag', accentDark: '#fbbf24', accentLight: '#b45309' },
+      { id: 'dim', label: 'Dim', icon: 'eye-slash', accentDark: '#fb923c', accentLight: '#c2410c' },
+      { id: 'hide', label: 'Hide', icon: 'prohibit', accentDark: '#f87171', accentLight: '#b91c1c' },
+      { id: 'allow', label: 'Trust', icon: 'shield-check', accentDark: '#34d399', accentLight: '#065f46' },
+    ];
+
+    for (const def of segmentDefs) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'ng-action-btn';
+      btn.className = 'ng-seg-btn';
       btn.style.setProperty('--btn-accent', isDark ? def.accentDark : def.accentLight);
       btn.style.setProperty('--btn-accent-fg', isDark ? def.accentDark : def.accentLight);
-      const isActive = currentLocalAction === def.action;
+
+      const isActive =
+        def.id === 'pass'
+          ? ctx.decision.origin !== 'local' && ctx.decision.action === 'none'
+          : currentLocalAction === def.id;
+
       if (isActive) {
         btn.dataset.active = 'true';
       }
       btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-      btn.appendChild(createPhosphorSvg(def.icon, 16));
+      btn.appendChild(createPhosphorSvg(def.icon, 15));
       const span = document.createElement('span');
       span.textContent = def.label;
       btn.appendChild(span);
 
-      btn.addEventListener('click', () => void triggerSave(def.action));
+      if (def.id === 'pass') {
+        btn.addEventListener('click', () => void triggerClear());
+      } else {
+        const localAction = def.id;
+        btn.addEventListener('click', () => void triggerSave(localAction));
+      }
       actionButtons.push(btn);
-      grid.appendChild(btn);
+      segmentedBar.appendChild(btn);
     }
 
-    actionsSection.appendChild(grid);
+    actionsSection.appendChild(segmentedBar);
     body.appendChild(actionsSection);
-    body.appendChild(fieldWrap);
+    body.appendChild(fieldGroup);
 
     const allObservableSignals: ObservableSignalId[] = [...ctx.decision.observedYppSignals];
     if (ctx.decision.hasPaidPromotion) {
@@ -1004,7 +1258,7 @@ export class InPagePopoverManager {
             const updatedHref = computeSuggestHref(nextTopics ?? ctx.decision.topics);
             if (updatedHref) suggestLink.href = updatedHref;
           }
-          statusText.textContent = val ? `Topic set locally` : 'Topic set to auto';
+          statusText.textContent = val ? 'Topic set locally' : 'Topic set to auto';
         }
       } catch {
         if (this.openToken === myToken) {
@@ -1026,22 +1280,7 @@ export class InPagePopoverManager {
       clearBtn.type = 'button';
       clearBtn.className = 'ng-clear-btn';
       clearBtn.textContent = 'Remove rule';
-      clearBtn.addEventListener('click', async () => {
-        if (isSubmitting) return;
-        setBusyState(true);
-        statusText.textContent = 'Removing...';
-        try {
-          await ctx.onClear(ctx.ref);
-          if (this.openToken === myToken) {
-            this.close(true);
-          }
-        } catch {
-          if (this.openToken === myToken) {
-            statusText.textContent = 'Could not remove rule';
-            setBusyState(false);
-          }
-        }
-      });
+      clearBtn.addEventListener('click', () => void triggerClear());
       footer.appendChild(clearBtn);
     }
 
@@ -1054,8 +1293,8 @@ export class InPagePopoverManager {
 
     const rect = ctx.anchor.getBoundingClientRect();
     const measured = panel.getBoundingClientRect();
-    const panelWidth = Math.max(240, measured.width || 332);
-    const panelHeight = Math.max(200, measured.height || 360);
+    const panelWidth = Math.max(260, measured.width || 348);
+    const panelHeight = Math.max(200, measured.height || 380);
 
     let originX: 'left' | 'right' = 'right';
     let left = rect.right - panelWidth;
@@ -1153,6 +1392,12 @@ export class InPagePopoverManager {
         activeInShadow instanceof HTMLInputElement ||
         activeInShadow instanceof HTMLSelectElement
       ) {
+        return;
+      }
+      if (e.key === '0') {
+        e.preventDefault();
+        e.stopPropagation();
+        void triggerClear();
         return;
       }
       const keyMap: Record<string, LocalRuleAction> = {

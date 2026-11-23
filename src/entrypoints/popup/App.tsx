@@ -20,8 +20,26 @@ import { getCategoryMeta } from '@/lib/categories';
 import type { RefreshListsOutcome, StateSnapshot } from '@/lib/messages';
 import { formatHandle } from '@/lib/normalize';
 import { fetchSnapshot, sendRuntimeMessage } from '@/lib/runtime-client';
-import { TOPICS, YPP_SIGNAL_LABELS } from '@/lib/taxonomy';
+import {
+  formatMonetizationSummary,
+  hasObservedYppSignals,
+  TOPICS,
+} from '@/lib/taxonomy';
 import type { CategoryId, ChannelRef, LocalRuleAction } from '@/lib/types';
+
+function YppInlineSummary({ text }: { text: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-emerald-300 min-w-0">
+      <CurrencyCircleDollar
+        size={12}
+        weight="regular"
+        className="text-emerald-400 shrink-0"
+        aria-hidden="true"
+      />
+      <span className="truncate">{text}</span>
+    </span>
+  );
+}
 
 function isYouTubeUrl(rawUrl: string): boolean {
   if (!rawUrl) return false;
@@ -426,15 +444,23 @@ export default function App() {
 
               const isLocal = d.origin === 'local';
               const topicName = d.topics[0] ? TOPICS[d.topics[0]]?.shortLabel : d.rawYouTubeCategory;
-              const yppText =
-                d.observedYppSignals.length > 0
-                  ? d.observedYppSignals.map((s) => YPP_SIGNAL_LABELS[s] ?? s).join(', ')
-                  : null;
+              const hasYpp = hasObservedYppSignals(d.observedYppSignals);
+              const yppSummary = formatMonetizationSummary(
+                d.observedYppSignals,
+                d.monetizationInspected,
+              );
+              const yppCompact = hasYpp ? yppSummary.replace(/^YPP:\s*/, '') : null;
 
               const detailTitle = [
-                d.action !== 'none' ? `${d.primaryLabel} · ${d.sourceName}` : null,
+                d.action !== 'none'
+                  ? d.category === 'ypp-monetized'
+                    ? yppSummary
+                    : `${d.primaryLabel} · ${d.sourceName}`
+                  : null,
                 topicName ? `Topic: ${topicName}` : null,
-                yppText ? `YPP: ${yppText}` : null,
+                d.category !== 'ypp-monetized' && (hasYpp || d.monetizationInspected)
+                  ? yppSummary
+                  : null,
                 d.note ?? null,
               ]
                 .filter(Boolean)
@@ -452,39 +478,52 @@ export default function App() {
                     </div>
                     <div className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5 min-w-0">
                       {d.action !== 'none' ? (
-                        <>
-                          <span className="text-slate-200 truncate shrink-0 max-w-[115px]">
-                            {d.primaryLabel}
-                          </span>
-                          <span className="opacity-45 shrink-0">·</span>
-                          <span className="truncate min-w-0">{d.sourceName}</span>
-                          {topicName && d.origin !== 'topic' && (
-                            <>
-                              <span className="opacity-45 shrink-0">·</span>
-                              <span className="text-slate-300 truncate shrink-0 max-w-[64px]">
-                                {topicName}
-                              </span>
-                            </>
-                          )}
-                        </>
-                      ) : topicName || yppText ? (
+                        d.category === 'ypp-monetized' && yppCompact ? (
+                          <>
+                            <YppInlineSummary text={yppCompact} />
+                            {topicName && (
+                              <>
+                                <span className="opacity-45 shrink-0">·</span>
+                                <span className="text-slate-300 truncate shrink-0 max-w-[64px]">
+                                  {topicName}
+                                </span>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-slate-200 truncate shrink-0 max-w-[115px]">
+                              {d.primaryLabel}
+                            </span>
+                            <span className="opacity-45 shrink-0">·</span>
+                            <span className="truncate min-w-0">{d.sourceName}</span>
+                            {topicName && d.origin !== 'topic' && (
+                              <>
+                                <span className="opacity-45 shrink-0">·</span>
+                                <span className="text-slate-300 truncate shrink-0 max-w-[64px]">
+                                  {topicName}
+                                </span>
+                              </>
+                            )}
+                          </>
+                        )
+                      ) : topicName || yppCompact ? (
                         <>
                           {topicName && (
                             <span className="text-slate-300 truncate shrink-0 max-w-[90px]">
                               {topicName}
                             </span>
                           )}
-                          {topicName && yppText && <span className="opacity-45 shrink-0">·</span>}
-                          {yppText && (
-                            <span className="flex items-center gap-1 text-slate-400 min-w-0">
-                              <CurrencyCircleDollar size={11} className="shrink-0" />
-                              <span className="truncate">{yppText}</span>
-                            </span>
-                          )}
+                          {topicName && yppCompact && <span className="opacity-45 shrink-0">·</span>}
+                          {yppCompact && <YppInlineSummary text={yppCompact} />}
                         </>
                       ) : (
                         <span className="font-mono text-[10.5px] text-slate-400 truncate block">
-                          {formatHandle(ch.handle) || ch.channelId || 'No signal'}
+                          {formatHandle(ch.handle) ||
+                            ch.channelId ||
+                            (d.monetizationInspected
+                              ? 'YPP status not publicly shown'
+                              : 'Pending inspection')}
                         </span>
                       )}
                     </div>

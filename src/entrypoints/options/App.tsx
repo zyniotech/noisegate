@@ -50,8 +50,10 @@ import { BUNDLED_STARTER_LIST_ID } from '@/lib/starter-list';
 import {
   formatMonetizationSummary,
   getTopObservedCategory,
+  hasObservedYppSignals,
   TOPIC_LIST,
   TOPICS,
+  YPP_SIGNAL_LABELS,
 } from '@/lib/taxonomy';
 import type {
   CategoryId,
@@ -281,7 +283,13 @@ export default function App() {
         prof.channelKey.toLowerCase().includes(q) ||
         prof.observedTopics.some((t) =>
           (TOPICS[t]?.label ?? t).toLowerCase().includes(q),
-        ),
+        ) ||
+        prof.yppSignals.some((s) =>
+          (YPP_SIGNAL_LABELS[s] ?? s).toLowerCase().includes(q),
+        ) ||
+        formatMonetizationSummary(prof.yppSignals, prof.monetizationInspected)
+          .toLowerCase()
+          .includes(q),
     );
   }, [snapshot?.channelProfiles, profileSearch]);
 
@@ -1347,9 +1355,10 @@ export default function App() {
                   Monetization & Commercial Signals (Neutral Observations)
                 </h2>
                 <p className="text-[12.5px] text-slate-300 mt-0.5">
-                  Because YouTube places ads even on non-partner channels, NoiseGate only reports
-                  verifiable public YouTube Partner Program features (Memberships, Super Thanks,
-                  Super Chat, Shopping) and official creator Paid Promotion disclosures.
+                  Because YouTube places ads even on non-partner channels, NoiseGate never guesses
+                  monetization from ad playback and never claims a channel is unmonetized. It only
+                  reports verifiable YouTube Partner Program signals (Partner status, Memberships,
+                  Super Thanks, Super Chat, Shopping) and official creator Paid Promotion disclosures.
                 </p>
               </div>
 
@@ -1362,8 +1371,8 @@ export default function App() {
                         Show YPP Monetization Info on Watch & Channel pages
                       </div>
                       <div className="text-[12px] text-slate-300 mt-0.5">
-                        Displays observed Partner features factually beneath the video title and
-                        in the channel popover.
+                        Displays observed Partner status and features factually on Watch and Channel
+                        pages and in the channel popover.
                       </div>
                     </div>
                   </div>
@@ -1494,7 +1503,7 @@ export default function App() {
                 {filteredProfiles.length === 0 ? (
                   <div className="p-6 text-[13px] text-slate-300">
                     {(snapshot?.channelProfiles.length ?? 0) === 0
-                      ? 'No channel profiles cached yet. Open any YouTube video or channel page and NoiseGate will record its topic category and observable YPP features locally.'
+                      ? 'No channel profiles cached yet. Open any YouTube video or channel page and NoiseGate will record its topic category and observable YPP signals locally.'
                       : 'No cached channel profiles match your search filter.'}
                   </div>
                 ) : (
@@ -1506,6 +1515,11 @@ export default function App() {
                         effectiveTopics.length > 0
                           ? effectiveTopics.map((t) => TOPICS[t]?.label ?? t).join(', ')
                           : rawCat ?? 'Unclassified';
+                      const hasYpp = hasObservedYppSignals(prof.yppSignals);
+                      const yppSummary = formatMonetizationSummary(
+                        prof.yppSignals,
+                        prof.monetizationInspected,
+                      );
 
                       return (
                         <div
@@ -1523,15 +1537,38 @@ export default function App() {
                                   .join(' · ')}
                               </span>
                             </div>
-                            <div className="text-[12px] text-slate-300 mt-0.5 flex flex-wrap items-center gap-x-2">
+                            <div className="text-[12px] text-slate-300 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                               <span className="text-slate-100">{topicStr}</span>
                               <span className="opacity-40">·</span>
-                              <span>
-                                {formatMonetizationSummary(
-                                  prof.yppSignals,
-                                  prof.monetizationInspected,
-                                )}
+                              <span
+                                className={`inline-flex items-center gap-1 ${
+                                  hasYpp ? 'text-emerald-300' : 'text-slate-400'
+                                }`}
+                              >
+                                <CurrencyCircleDollar
+                                  size={13}
+                                  weight="regular"
+                                  className={
+                                    hasYpp ? 'text-emerald-400 shrink-0' : 'text-slate-400 shrink-0'
+                                  }
+                                  aria-hidden="true"
+                                />
+                                <span>{yppSummary}</span>
                               </span>
+                              {prof.paidPromotionVideoIds.length > 0 && (
+                                <>
+                                  <span className="opacity-40">·</span>
+                                  <span className="inline-flex items-center gap-1 text-slate-300">
+                                    <Megaphone
+                                      size={12}
+                                      weight="regular"
+                                      className="text-slate-400 shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                    <span>{prof.paidPromotionVideoIds.length} paid promo</span>
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
                           <div className="text-[11px] text-slate-400 tabular shrink-0">

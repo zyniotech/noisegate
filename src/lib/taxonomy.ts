@@ -164,10 +164,19 @@ export function mapYouTubeCategoryToTopic(rawCategory?: string | null): TopicId 
 }
 
 export const YPP_SIGNAL_LABELS: Record<YppSignalId, string> = {
+  'ypp-partner': 'Partner (Monetized)',
   'ypp-memberships': 'Memberships',
   'ypp-super-thanks': 'Super Thanks',
   'ypp-super-chat': 'Super Chat',
   'ypp-shopping': 'Shopping',
+};
+
+const YPP_SIGNAL_PRIORITY: Record<YppSignalId, number> = {
+  'ypp-memberships': 0,
+  'ypp-super-thanks': 1,
+  'ypp-super-chat': 2,
+  'ypp-shopping': 3,
+  'ypp-partner': 4,
 };
 
 const VALID_YPP_SIGNALS = new Set<string>(Object.keys(YPP_SIGNAL_LABELS));
@@ -189,18 +198,36 @@ export function normalizeObservableSignal(raw?: string | null): ObservableSignal
   return VALID_OBSERVABLE_SIGNALS.has(key) ? (key as ObservableSignalId) : undefined;
 }
 
+export function hasObservedYppSignals(signals?: readonly YppSignalId[] | null): boolean {
+  if (!Array.isArray(signals) || signals.length === 0) return false;
+  return signals.some((s) => Boolean(normalizeYppSignal(s)));
+}
+
 export function formatMonetizationSummary(
-  signals: YppSignalId[],
+  signals: readonly YppSignalId[],
   inspected: boolean,
 ): string {
-  if (signals.length > 0) {
-    const names = signals.map((s) => YPP_SIGNAL_LABELS[s] ?? s).join(', ');
-    return `YPP signals: ${names}`;
+  const unique = Array.from(
+    new Set(
+      signals
+        .map((s) => normalizeYppSignal(s))
+        .filter((s): s is YppSignalId => Boolean(s)),
+    ),
+  );
+  if (unique.length > 0) {
+    const concrete = unique
+      .filter((s) => s !== 'ypp-partner')
+      .sort((a, b) => YPP_SIGNAL_PRIORITY[a] - YPP_SIGNAL_PRIORITY[b]);
+    if (concrete.length > 0) {
+      const names = concrete.map((s) => YPP_SIGNAL_LABELS[s] ?? s).join(', ');
+      return `YPP: Monetized (${names})`;
+    }
+    return 'YPP: Monetized (Partner)';
   }
   if (inspected) {
-    return 'No public YPP signals observed';
+    return 'YPP status not publicly shown';
   }
-  return 'Not yet inspected';
+  return 'Not yet inspected on Watch or Channel page';
 }
 
 export function getTopObservedCategory(

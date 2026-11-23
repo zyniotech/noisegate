@@ -17,7 +17,7 @@ NoiseGate is a free, open-source browser extension that gives you direct control
 ### Core Capabilities
 
 **1. Official YouTube Synthetic & Commercial Disclosures**
-NoiseGate reads YouTube's official "Altered or synthetic content" disclosure on Watch pages, surfaces paid promotion disclosures per video, and shows public YouTube Partner Program features (`Memberships`, `Super Thanks`, `Super Chat`, `Shopping`) without ever guessing monetization from ads.
+NoiseGate reads YouTube's official "Altered or synthetic content" disclosure on Watch pages, surfaces paid promotion disclosures per video, and shows verifiable public YouTube Partner Program signals (`Partner`, `Memberships`, `Super Thanks`, `Super Chat`, `Shopping`) without ever guessing monetization from ads or claiming a channel is unmonetized.
 
 **2. Neutral Topic Controls**
 Choose locally whether channels categorized under topics such as Science, Technology, Education, Gaming, Music, or Entertainment should `Pass`, `Label`, `Dim`, or `Hide` in your feed.

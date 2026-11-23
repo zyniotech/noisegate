@@ -19,6 +19,7 @@ export type TopicId =
   | 'kids-family';
 
 export type YppSignalId =
+  | 'ypp-partner'
   | 'ypp-memberships'
   | 'ypp-super-thanks'
   | 'ypp-super-chat'

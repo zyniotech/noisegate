@@ -30,6 +30,6 @@ NoiseGate only initiates outbound **HTTPS** requests when:
 
 - `storage` - Persist local rules, settings, topic matrix, caches, and session telemetry on-device.
 - `alarms` - Schedule periodic background refreshes of enabled filter lists.
-- `*://*.youtube.com/*` - Read public player/page disclosures (`microformat`, paid promotion, synthetic disclosure, public YPP surface buttons) and apply your chosen `Label`, `Dim`, or `Hide` presentation locally.
+- `*://*.youtube.com/*` - Read public player/page disclosures (`microformat`, paid promotion, synthetic disclosure, public YPP partner and feature metadata) and apply your chosen `Label`, `Dim`, or `Hide` presentation locally.
 - `https://cdn.jsdelivr.net/*`, `https://raw.githubusercontent.com/*` - Fetch the built-in open community directory (`zyniotech/noisegate-lists`) and open lists hosted on GitHub/jsDelivr.
 - Optional `https://*/*` (`optional_host_permissions`) - Requested at runtime only if you manually subscribe to a custom third-party HTTPS filter list host.

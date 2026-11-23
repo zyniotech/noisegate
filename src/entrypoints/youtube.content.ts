@@ -15,8 +15,14 @@ import {
   parseYouTubeChannelHref,
   sanitizeHttpUrl,
 } from '@/lib/normalize';
-import { createPhosphorSvg } from '@/lib/phosphor-svg';
-import { formatMonetizationSummary, TOPICS } from '@/lib/taxonomy';
+import { createPhosphorSvg, type InPageIconName } from '@/lib/phosphor-svg';
+import {
+  formatMonetizationSummary,
+  hasObservedYppSignals,
+  normalizeYppSignal,
+  TOPICS,
+  YPP_SIGNAL_LABELS,
+} from '@/lib/taxonomy';
 import type {
   ChannelRef,
   PageStats,
@@ -40,7 +46,109 @@ const CARD_SELECTOR = [
 
 const STYLE_ELEMENT_ID = 'noisegate-inpage-style';
 
+const YPP_PRIORITY: Record<YppSignalId, number> = {
+  'ypp-memberships': 0,
+  'ypp-super-thanks': 1,
+  'ypp-super-chat': 2,
+  'ypp-shopping': 3,
+  'ypp-partner': 4,
+};
+
 const INPAGE_CSS = `
+  .ng-signal-line,
+  .ng-watch-bar,
+  .ng-channel-bar,
+  .ng-watch-inline-trigger {
+    --ng-surface: #f8fafc;
+    --ng-surface-subtle: #eef2f6;
+    --ng-border: rgba(15, 23, 42, 0.14);
+    --ng-border-strong: rgba(15, 23, 42, 0.25);
+    --ng-top-highlight: rgba(255, 255, 255, 0.9);
+    --ng-fg: #0f172a;
+    --ng-fg-muted: #475569;
+    --ng-fg-dim: #526075;
+    --ng-btn-bg: #ffffff;
+    --ng-btn-bg-hover: #e2e8f0;
+    --ng-btn-border: rgba(15, 23, 42, 0.22);
+    --ng-btn-fg: #0f172a;
+    --ng-focus-ring: rgba(15, 23, 42, 0.65);
+    --ng-positive: #065f46;
+    --ng-positive-bg: rgba(4, 120, 87, 0.09);
+    --ng-positive-border: rgba(4, 120, 87, 0.28);
+    --ng-icon-color: color-mix(in srgb, var(--ng-accent, #475569) 76%, #0f172a);
+    --ng-shadow: 0 1px 3px rgba(15, 23, 42, 0.07);
+  }
+
+  html[dark] .ng-signal-line,
+  html[dark] .ng-watch-bar,
+  html[dark] .ng-channel-bar,
+  html[dark] .ng-watch-inline-trigger,
+  ytd-app[dark] .ng-signal-line,
+  ytd-app[dark] .ng-watch-bar,
+  ytd-app[dark] .ng-channel-bar,
+  ytd-app[dark] .ng-watch-inline-trigger,
+  ytm-app[dark] .ng-signal-line,
+  ytm-app[dark] .ng-watch-bar,
+  ytm-app[dark] .ng-channel-bar,
+  ytm-app[dark] .ng-watch-inline-trigger,
+  body[dark] .ng-signal-line,
+  body[dark] .ng-watch-bar,
+  body[dark] .ng-channel-bar,
+  body[dark] .ng-watch-inline-trigger,
+  [dark] .ng-signal-line,
+  [dark] .ng-watch-bar,
+  [dark] .ng-channel-bar,
+  [dark] .ng-watch-inline-trigger,
+  html[data-ng-theme="dark"] .ng-signal-line,
+  html[data-ng-theme="dark"] .ng-watch-bar,
+  html[data-ng-theme="dark"] .ng-channel-bar,
+  html[data-ng-theme="dark"] .ng-watch-inline-trigger {
+    --ng-surface: #141821;
+    --ng-surface-subtle: rgba(255, 255, 255, 0.06);
+    --ng-border: rgba(255, 255, 255, 0.14);
+    --ng-border-strong: rgba(255, 255, 255, 0.24);
+    --ng-top-highlight: rgba(255, 255, 255, 0.08);
+    --ng-fg: #f3f4f6;
+    --ng-fg-muted: #b6c2d2;
+    --ng-fg-dim: #9aa7b8;
+    --ng-btn-bg: #1e2532;
+    --ng-btn-bg-hover: #283142;
+    --ng-btn-border: rgba(255, 255, 255, 0.20);
+    --ng-btn-fg: #f8fafc;
+    --ng-focus-ring: rgba(248, 250, 252, 0.72);
+    --ng-positive: #34d399;
+    --ng-positive-bg: rgba(16, 185, 129, 0.14);
+    --ng-positive-border: rgba(52, 211, 153, 0.30);
+    --ng-icon-color: color-mix(in srgb, var(--ng-accent, #94a3b8) 88%, #ffffff);
+    --ng-shadow: 0 2px 6px rgba(0, 0, 0, 0.32);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    html:not([light]):not([data-ng-theme="light"]):not(:has(ytd-app:not([dark]))) .ng-signal-line,
+    html:not([light]):not([data-ng-theme="light"]):not(:has(ytd-app:not([dark]))) .ng-watch-bar,
+    html:not([light]):not([data-ng-theme="light"]):not(:has(ytd-app:not([dark]))) .ng-channel-bar,
+    html:not([light]):not([data-ng-theme="light"]):not(:has(ytd-app:not([dark]))) .ng-watch-inline-trigger {
+      --ng-surface: #141821;
+      --ng-surface-subtle: rgba(255, 255, 255, 0.06);
+      --ng-border: rgba(255, 255, 255, 0.14);
+      --ng-border-strong: rgba(255, 255, 255, 0.24);
+      --ng-top-highlight: rgba(255, 255, 255, 0.08);
+      --ng-fg: #f3f4f6;
+      --ng-fg-muted: #b6c2d2;
+      --ng-fg-dim: #9aa7b8;
+      --ng-btn-bg: #1e2532;
+      --ng-btn-bg-hover: #283142;
+      --ng-btn-border: rgba(255, 255, 255, 0.20);
+      --ng-btn-fg: #f8fafc;
+      --ng-focus-ring: rgba(248, 250, 252, 0.72);
+      --ng-positive: #34d399;
+      --ng-positive-bg: rgba(16, 185, 129, 0.14);
+      --ng-positive-border: rgba(52, 211, 153, 0.30);
+      --ng-icon-color: color-mix(in srgb, var(--ng-accent, #94a3b8) 88%, #ffffff);
+      --ng-shadow: 0 2px 6px rgba(0, 0, 0, 0.32);
+    }
+  }
+
   [data-ng-card="1"] {
     position: relative;
   }
@@ -83,42 +191,58 @@ const INPAGE_CSS = `
     }
   }
 
+  @media (prefers-reduced-transparency: reduce) {
+    .ng-card-trigger {
+      background: #0f1218 !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+  }
+
   .ng-signal-line {
     display: flex;
     align-items: center;
     gap: 5px;
     margin-top: 4px;
-    padding: 2px 0;
+    padding: 2px 6px 2px 7px;
+    border-left: 2px solid var(--ng-accent, #d97706);
+    border-radius: 0 4px 4px 0;
+    background: var(--ng-surface-subtle);
+    font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
     font-size: 12px;
     line-height: 1.35;
+    min-height: 18px;
     font-weight: 500;
-    color: var(--yt-spec-text-secondary, #606060);
+    color: var(--ng-fg-muted);
     max-width: 100%;
     overflow: hidden;
+    box-sizing: border-box;
   }
 
   .ng-signal-line .ng-signal-icon {
     flex-shrink: 0;
     color: var(--ng-accent, #d97706);
+    color: var(--ng-icon-color, var(--ng-accent, #d97706));
     display: inline-flex;
     align-items: center;
   }
 
   .ng-signal-line .ng-signal-label {
-    color: var(--yt-spec-text-primary, #0f0f0f);
-    font-weight: 500;
+    color: var(--ng-fg);
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .ng-signal-line .ng-signal-sep {
-    opacity: 0.45;
+    color: var(--ng-fg-dim);
+    opacity: 0.72;
     flex-shrink: 0;
   }
 
   .ng-signal-line .ng-signal-source {
-    color: var(--yt-spec-text-secondary, #606060);
+    color: var(--ng-fg-muted);
     font-weight: 400;
     white-space: nowrap;
     overflow: hidden;
@@ -128,39 +252,46 @@ const INPAGE_CSS = `
 
   .ng-signal-line .ng-signal-evidence {
     flex-shrink: 0;
-    color: var(--yt-spec-text-secondary, #606060);
+    color: var(--ng-fg-muted);
     display: inline-flex;
     align-items: center;
-    opacity: 0.85;
+    opacity: 0.9;
     text-decoration: none;
     margin-left: 2px;
+    border-radius: 3px;
   }
 
   .ng-signal-line .ng-signal-evidence:hover {
-    color: var(--yt-spec-text-primary, #0f0f0f);
+    color: var(--ng-fg);
     opacity: 1;
+  }
+
+  .ng-signal-line .ng-signal-evidence:focus-visible {
+    outline: 2px solid var(--ng-focus-ring);
+    outline-offset: 1px;
   }
 
   .ng-card-trigger {
     position: absolute;
-    top: 6px;
-    left: 6px;
+    top: 8px;
+    left: 8px;
     z-index: 25;
     width: 26px;
     height: 26px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(11, 14, 20, 0.88);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 4px 10px rgba(0, 0, 0, 0.35);
-    color: #e2e8f0;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(12, 15, 22, 0.84);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.42);
+    color: #f1f5f9;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     opacity: 0;
     pointer-events: auto;
-    backdrop-filter: blur(6px);
-    transition: opacity 120ms ease-out, background-color 110ms ease, transform 90ms ease-out;
+    backdrop-filter: blur(8px) saturate(130%);
+    -webkit-backdrop-filter: blur(8px) saturate(130%);
+    transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 110ms ease, border-color 110ms ease, transform 90ms cubic-bezier(0.23, 1, 0.32, 1);
     padding: 0;
   }
 
@@ -171,9 +302,13 @@ const INPAGE_CSS = `
   }
 
   [data-ng-has-signal="1"] > .ng-card-trigger {
-    opacity: 0.85;
+    opacity: 0.9;
     border-color: var(--ng-accent, #94a3b8);
-    color: var(--ng-accent, #f8fafc);
+    box-shadow:
+      inset 2px 0 0 var(--ng-accent, #94a3b8),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      0 2px 8px rgba(0, 0, 0, 0.45);
+    color: #f8fafc;
   }
 
   [data-ng-has-signal="1"]:hover > .ng-card-trigger {
@@ -181,7 +316,7 @@ const INPAGE_CSS = `
   }
 
   .ng-card-trigger:hover {
-    background: rgba(15, 18, 25, 0.96);
+    background: rgba(15, 19, 28, 0.96);
     color: #ffffff;
   }
 
@@ -189,30 +324,68 @@ const INPAGE_CSS = `
     transform: scale(0.94);
   }
 
+  .ng-card-trigger:focus-visible {
+    outline: 2px solid #f8fafc;
+    outline-offset: 2px;
+  }
+
   html[data-ng-hide-triggers="1"] .ng-card-trigger {
     display: none !important;
   }
 
-  .ng-watch-bar,
-  .ng-channel-bar {
+  .ng-watch-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    margin: 10px 0 6px;
-    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    width: 100%;
+    margin: 10px 0 8px;
+    padding: 8px 10px 8px 12px;
+    border: 1px solid var(--ng-border);
     border-left: 2px solid var(--ng-accent, #94a3b8);
-    background: var(--yt-spec-badge-chip-background, rgba(128, 128, 128, 0.08));
-    border-radius: 0 6px 6px 0;
+    border-radius: 2px 6px 6px 2px;
+    background: var(--ng-surface);
+    box-shadow: inset 0 1px 0 var(--ng-top-highlight), var(--ng-shadow);
+    color: var(--ng-fg);
+    font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
     font-size: 12.5px;
     line-height: 1.4;
-    color: var(--yt-spec-text-primary, #0f0f0f);
+    box-sizing: border-box;
+  }
+
+  .ng-channel-bar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    width: fit-content;
+    max-width: 100%;
+    margin: 10px 0 2px;
+    padding: 6px 8px 6px 10px;
+    border: 1px solid var(--ng-border);
+    border-left: 2px solid var(--ng-accent, #94a3b8);
+    border-radius: 2px 6px 6px 2px;
+    background: var(--ng-surface);
+    box-shadow: inset 0 1px 0 var(--ng-top-highlight), var(--ng-shadow);
+    color: var(--ng-fg);
+    font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.35;
+    box-sizing: border-box;
+    align-self: flex-start;
+  }
+
+  .ng-channel-bar[data-ng-dock="standalone"] {
+    max-width: min(1284px, calc(100% - 32px));
+    margin: 8px 0 6px max(0px, calc((100% - 1284px) / 2));
   }
 
   .ng-watch-bar-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     min-width: 0;
     flex-wrap: wrap;
   }
@@ -220,53 +393,101 @@ const INPAGE_CSS = `
   .ng-watch-bar-icon {
     flex-shrink: 0;
     color: var(--ng-accent, #94a3b8);
+    color: var(--ng-icon-color, var(--ng-accent, #94a3b8));
     display: inline-flex;
+    align-items: center;
   }
 
   .ng-watch-bar-text {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
+    align-items: center;
     gap: 6px;
     min-width: 0;
   }
 
-  .ng-watch-bar-note {
-    color: var(--yt-spec-text-secondary, #606060);
+  .ng-strip-strong {
+    color: var(--ng-fg);
+    font-weight: 600;
+  }
+
+  .ng-strip-sep {
+    color: var(--ng-fg-dim);
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+
+  .ng-strip-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--ng-fg-muted);
+    font-weight: 500;
+  }
+
+  .ng-strip-muted {
+    color: var(--ng-fg-muted);
     font-size: 12px;
   }
 
-  .ng-watch-bar-meta {
+  .ng-watch-bar-note {
+    color: var(--ng-fg-muted);
+    font-size: 12px;
+  }
+
+  .ng-ypp-tag {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    color: var(--yt-spec-text-secondary, #606060);
-    font-size: 12px;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  .ng-ypp-tag.ng-ypp-positive {
+    border: 1px solid var(--ng-positive-border);
+    background: var(--ng-positive-bg);
+    color: var(--ng-positive);
   }
 
   .ng-watch-action-btn {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 5px;
     height: 28px;
     padding: 0 10px;
-    border-radius: 6px;
-    border: 1px solid var(--yt-spec-10-percent-layer, rgba(128, 128, 128, 0.25));
-    background: transparent;
-    color: var(--yt-spec-text-primary, #0f0f0f);
+    border-radius: 5px;
+    border: 1px solid var(--ng-btn-border);
+    background: var(--ng-btn-bg);
+    box-shadow: inset 0 1px 0 var(--ng-top-highlight);
+    color: var(--ng-btn-fg);
+    font-family: inherit;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
     cursor: pointer;
-    transition: background-color 120ms ease, transform 90ms ease;
+    transition: background-color 120ms cubic-bezier(0.23, 1, 0.32, 1), border-color 120ms cubic-bezier(0.23, 1, 0.32, 1), color 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 90ms cubic-bezier(0.23, 1, 0.32, 1);
   }
 
   .ng-watch-action-btn:hover {
-    background: var(--yt-spec-10-percent-layer, rgba(128, 128, 128, 0.16));
+    background: var(--ng-btn-bg-hover);
+    border-color: var(--ng-border-strong);
   }
 
   .ng-watch-action-btn:active {
     transform: scale(0.97);
+  }
+
+  .ng-watch-action-btn:focus-visible,
+  .ng-watch-inline-trigger:focus-visible {
+    outline: 2px solid var(--ng-focus-ring);
+    outline-offset: 2px;
   }
 
   .ng-watch-inline-trigger {
@@ -274,22 +495,35 @@ const INPAGE_CSS = `
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 5px;
-    height: 30px;
-    padding: 0 10px;
+    height: 32px;
+    padding: 0 11px;
     border-radius: 6px;
-    border: 1px solid var(--yt-spec-10-percent-layer, rgba(128, 128, 128, 0.25));
-    background: transparent;
-    color: var(--yt-spec-text-secondary, #606060);
+    border: 1px solid var(--ng-btn-border);
+    background: var(--ng-btn-bg);
+    box-shadow: inset 0 1px 0 var(--ng-top-highlight);
+    color: var(--ng-btn-fg);
+    font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
     cursor: pointer;
-    transition: background-color 120ms ease, color 120ms ease, transform 90ms ease;
+    transition: background-color 120ms cubic-bezier(0.23, 1, 0.32, 1), border-color 120ms cubic-bezier(0.23, 1, 0.32, 1), color 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 90ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  .ng-watch-inline-trigger[data-ng-active="1"] {
+    border-left: 2px solid var(--ng-accent, #94a3b8);
+  }
+
+  .ng-watch-inline-trigger[data-ng-active="1"] svg {
+    color: var(--ng-icon-color, var(--ng-accent, #94a3b8));
   }
 
   .ng-watch-inline-trigger:hover {
-    background: var(--yt-spec-10-percent-layer, rgba(128, 128, 128, 0.16));
-    color: var(--yt-spec-text-primary, #0f0f0f);
+    background: var(--ng-btn-bg-hover);
+    border-color: var(--ng-border-strong);
   }
 
   .ng-watch-inline-trigger:active {
@@ -325,6 +559,47 @@ interface CardRecord {
   signature: string;
 }
 
+function detectYouTubeDarkMode(): boolean {
+  if (
+    document.documentElement.hasAttribute('dark') ||
+    Boolean(document.querySelector('ytd-app[dark], ytm-app[dark], body[dark]'))
+  ) {
+    return true;
+  }
+  if (document.documentElement.hasAttribute('light')) {
+    return false;
+  }
+  if (document.querySelector('ytd-app, ytm-app')) {
+    return false;
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function syncThemeAttribute(): void {
+  const next = detectYouTubeDarkMode() ? 'dark' : 'light';
+  if (document.documentElement.dataset.ngTheme !== next) {
+    document.documentElement.dataset.ngTheme = next;
+  }
+}
+
+function formatYppStripLabel(signals: readonly YppSignalId[]): string {
+  const unique = Array.from(
+    new Set(
+      signals
+        .map((s) => normalizeYppSignal(s))
+        .filter((s): s is YppSignalId => Boolean(s)),
+    ),
+  );
+  const concrete = unique
+    .filter((s) => s !== 'ypp-partner')
+    .sort((a, b) => YPP_PRIORITY[a] - YPP_PRIORITY[b]);
+  if (concrete.length > 0) {
+    const names = concrete.map((s) => YPP_SIGNAL_LABELS[s] ?? s).join(', ');
+    return `YPP · Monetized · ${names}`;
+  }
+  return 'YPP · Monetized · Partner';
+}
+
 function parseBridgeDetail<T>(raw: unknown): T | null {
   if (!raw) return null;
   if (typeof raw === 'string') {
@@ -348,6 +623,59 @@ async function sendRuntime<T>(request: RuntimeRequest): Promise<T> {
     throw new Error(response?.error ?? 'Extension communication failed');
   }
   return response.data;
+}
+
+function findChannelBarMount(browseRoot: Element): {
+  host: HTMLElement;
+  position: 'append' | 'afterend';
+  dockVariant: 'inline' | 'column' | 'standalone';
+} | null {
+  const headlineInfo = browseRoot.querySelector<HTMLElement>(
+    [
+      'yt-page-header-view-model .yt-page-header-view-model__page-header-headline-info',
+      'yt-page-header-view-model .yt-page-header-view-model-wiz__page-header-headline-info',
+    ].join(', '),
+  );
+  if (headlineInfo) {
+    const viewModel = headlineInfo.closest<HTMLElement>(
+      'yt-page-header-view-model, yt-page-header-view-model-wiz',
+    );
+    const actions = viewModel?.querySelector<HTMLElement>(
+      'yt-flexible-actions-view-model',
+    );
+    if (actions && !headlineInfo.contains(actions) && viewModel) {
+      return { host: viewModel, position: 'append', dockVariant: 'column' };
+    }
+    return { host: headlineInfo, position: 'append', dockVariant: 'inline' };
+  }
+
+  const pageHeaderViewModel = browseRoot.querySelector<HTMLElement>(
+    'yt-page-header-view-model, yt-page-header-view-model-wiz',
+  );
+  if (pageHeaderViewModel) {
+    return { host: pageHeaderViewModel, position: 'append', dockVariant: 'column' };
+  }
+
+  const legacyMeta = browseRoot.querySelector<HTMLElement>(
+    'ytd-c4-tabbed-header-renderer #inner-header-container #meta',
+  );
+  if (legacyMeta) {
+    return { host: legacyMeta, position: 'append', dockVariant: 'inline' };
+  }
+
+  const legacyInner = browseRoot.querySelector<HTMLElement>(
+    'ytd-c4-tabbed-header-renderer #inner-header-container',
+  );
+  if (legacyInner) {
+    return { host: legacyInner, position: 'afterend', dockVariant: 'standalone' };
+  }
+
+  const pageHeaderFallback = browseRoot.querySelector<HTMLElement>('#page-header');
+  if (pageHeaderFallback) {
+    return { host: pageHeaderFallback, position: 'afterend', dockVariant: 'standalone' };
+  }
+
+  return null;
 }
 
 export default defineContentScript({
@@ -374,6 +702,7 @@ export default defineContentScript({
     let cachedSubmissionRepo = 'zyniotech/noisegate-lists';
 
     function injectStyles(): void {
+      syncThemeAttribute();
       if (document.getElementById(STYLE_ELEMENT_ID)) return;
       const style = document.createElement('style');
       style.id = STYLE_ELEMENT_ID;
@@ -530,7 +859,7 @@ export default defineContentScript({
 
       const iconWrap = document.createElement('span');
       iconWrap.className = 'ng-signal-icon';
-      const iconName =
+      const iconName: InPageIconName =
         decision.action === 'hide'
           ? 'prohibit'
           : decision.action === 'dim'
@@ -563,6 +892,7 @@ export default defineContentScript({
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
         link.title = decision.note || 'Open source evidence';
+        link.setAttribute('aria-label', 'Open source evidence');
         link.appendChild(createPhosphorSvg('arrow-square-out', 12));
         link.addEventListener('click', (e) => e.stopPropagation());
         children.push(link);
@@ -709,6 +1039,46 @@ export default defineContentScript({
       return { videoId, channelId, handle, channelName };
     }
 
+    function appendSegmentSep(container: HTMLElement): void {
+      if (container.childElementCount > 0) {
+        const sep = document.createElement('span');
+        sep.className = 'ng-strip-sep';
+        sep.textContent = '·';
+        container.appendChild(sep);
+      }
+    }
+
+    function appendYppIndicator(
+      container: HTMLElement,
+      decision: ResolvedDecision,
+      unverifiedLabel: string,
+    ): void {
+      if (hasObservedYppSignals(decision.observedYppSignals)) {
+        appendSegmentSep(container);
+        const tag = document.createElement('span');
+        tag.className = 'ng-ypp-tag ng-ypp-positive';
+        tag.title = formatMonetizationSummary(
+          decision.observedYppSignals,
+          decision.monetizationInspected,
+        );
+        tag.appendChild(createPhosphorSvg('currency-circle-dollar', 13));
+        const text = document.createElement('span');
+        text.textContent = formatYppStripLabel(decision.observedYppSignals);
+        tag.appendChild(text);
+        container.appendChild(tag);
+        return;
+      }
+
+      if (unverifiedLabel) {
+        appendSegmentSep(container);
+        const muted = document.createElement('span');
+        muted.className = 'ng-strip-muted';
+        muted.title = formatMonetizationSummary([], decision.monetizationInspected);
+        muted.textContent = unverifiedLabel;
+        container.appendChild(muted);
+      }
+    }
+
     async function processWatchPage(): Promise<{
       channelId?: string;
       handle?: string;
@@ -716,8 +1086,8 @@ export default defineContentScript({
       decision: ResolvedDecision;
     } | null> {
       if (!location.pathname.startsWith('/watch')) {
-        document.querySelector('.ng-watch-bar')?.remove();
-        document.querySelector('.ng-watch-inline-trigger')?.remove();
+        document.querySelectorAll('.ng-watch-bar').forEach((el) => el.remove());
+        document.querySelectorAll('.ng-watch-inline-trigger').forEach((el) => el.remove());
         return null;
       }
 
@@ -772,8 +1142,8 @@ export default defineContentScript({
       }
 
       if (!ref.channelId && !ref.handle && !ref.videoId) {
-        document.querySelector('.ng-watch-bar')?.remove();
-        document.querySelector('.ng-watch-inline-trigger')?.remove();
+        document.querySelectorAll('.ng-watch-bar').forEach((el) => el.remove());
+        document.querySelectorAll('.ng-watch-inline-trigger').forEach((el) => el.remove());
         return null;
       }
 
@@ -824,6 +1194,23 @@ export default defineContentScript({
               : decision.primaryLabel
             : 'NoiseGate';
 
+        const triggerAccent =
+          decision.action === 'allow'
+            ? '#10b981'
+            : decision.action !== 'none'
+              ? decision.category === 'topic-match' && decision.matchedTopic
+                ? TOPICS[decision.matchedTopic]?.accentColor ?? getCategoryMeta(decision.category).accentColor
+                : getCategoryMeta(decision.category).accentColor
+              : '';
+
+        if (triggerAccent) {
+          trigger.dataset.ngActive = '1';
+          trigger.style.setProperty('--ng-accent', triggerAccent);
+        } else {
+          delete trigger.dataset.ngActive;
+          trigger.style.removeProperty('--ng-accent');
+        }
+
         if (trigger.dataset.ngTriggerText !== triggerText) {
           trigger.dataset.ngTriggerText = triggerText;
           const label = document.createElement('span');
@@ -847,11 +1234,17 @@ export default defineContentScript({
         decision.action === 'label' ||
         decision.action === 'dim' ||
         decision.action === 'hide' ||
+        decision.action === 'allow' ||
         decision.hasOfficialDisclosure;
 
+      const hasYpp = hasObservedYppSignals(decision.observedYppSignals);
+      const topicMeta = decision.topics[0] ? TOPICS[decision.topics[0]] : undefined;
+      const topicShort = topicMeta?.shortLabel ?? decision.rawYouTubeCategory;
+      const topicFull = topicMeta?.label ?? decision.rawYouTubeCategory;
+
       const hasNeutralMeta =
-        (cachedShowMonetization && decision.monetizationInspected) ||
-        (cachedShowTopic && (decision.topics.length > 0 || Boolean(decision.rawYouTubeCategory))) ||
+        (cachedShowMonetization && hasYpp) ||
+        (cachedShowTopic && Boolean(topicShort)) ||
         decision.hasPaidPromotion;
 
       if ((!hasActionOrDisclosure && !hasNeutralMeta) || !titleContainer) {
@@ -873,30 +1266,11 @@ export default defineContentScript({
         : null;
 
       const barAccent =
-        decision.category === 'topic-match' && decision.matchedTopic
-          ? TOPICS[decision.matchedTopic]?.accentColor ?? '#94a3b8'
-          : meta?.accentColor ?? '#94a3b8';
-
-      const metaItems: string[] = [];
-      if (cachedShowTopic) {
-        const topicLabel = decision.topics[0]
-          ? TOPICS[decision.topics[0]]?.label ?? decision.topics[0]
-          : decision.rawYouTubeCategory;
-        if (topicLabel) {
-          metaItems.push(`Topic: ${topicLabel}`);
-        }
-      }
-      if (cachedShowMonetization && decision.monetizationInspected) {
-        metaItems.push(
-          formatMonetizationSummary(
-            decision.observedYppSignals,
-            decision.monetizationInspected,
-          ),
-        );
-      }
-      if (decision.hasPaidPromotion) {
-        metaItems.push('Paid promotion disclosed');
-      }
+        decision.action === 'allow'
+          ? '#10b981'
+          : decision.category === 'topic-match' && decision.matchedTopic
+            ? TOPICS[decision.matchedTopic]?.accentColor ?? '#94a3b8'
+            : meta?.accentColor ?? '#94a3b8';
 
       const barSig = [
         ref.channelId ?? '',
@@ -906,7 +1280,10 @@ export default defineContentScript({
         decision.primaryLabel,
         decision.sourceName,
         decision.note ?? '',
-        metaItems.join('|'),
+        cachedShowTopic ? topicShort ?? '' : '',
+        cachedShowMonetization ? decision.observedYppSignals.join(',') : '',
+        cachedShowMonetization && decision.monetizationInspected ? '1' : '0',
+        decision.hasPaidPromotion ? '1' : '0',
         barAccent,
       ].join('::');
 
@@ -920,33 +1297,49 @@ export default defineContentScript({
         const left = document.createElement('div');
         left.className = 'ng-watch-bar-left';
 
+        const leadIcon: InPageIconName = hasActionOrDisclosure
+          ? decision.action === 'allow'
+            ? 'shield-check'
+            : decision.action === 'hide'
+              ? 'prohibit'
+              : decision.action === 'dim'
+                ? 'eye-slash'
+                : decision.hasOfficialDisclosure && decision.origin === 'disclosure'
+                  ? 'sparkle'
+                  : meta!.icon
+          : hasYpp
+            ? 'currency-circle-dollar'
+            : 'television';
+
         const iconEl = document.createElement('span');
         iconEl.className = 'ng-watch-bar-icon';
-        iconEl.appendChild(
-          createPhosphorSvg(
-            hasActionOrDisclosure
-              ? decision.hasOfficialDisclosure && decision.origin === 'disclosure'
-                ? 'sparkle'
-                : meta!.icon
-              : decision.observedYppSignals.length > 0
-                ? 'currency-circle-dollar'
-                : 'television',
-            15,
-          ),
-        );
+        iconEl.appendChild(createPhosphorSvg(leadIcon, 15));
+        left.appendChild(iconEl);
 
         const textWrap = document.createElement('div');
         textWrap.className = 'ng-watch-bar-text';
 
         if (hasActionOrDisclosure) {
           const strong = document.createElement('strong');
+          strong.className = 'ng-strip-strong';
           strong.textContent =
-            decision.action !== 'none' && decision.action !== 'allow'
-              ? `${decision.primaryLabel} · ${decision.sourceName}`
-              : 'YouTube Synthetic Disclosure Detected';
+            decision.action === 'allow'
+              ? 'Trusted'
+              : decision.action !== 'none'
+                ? decision.primaryLabel
+                : 'YouTube Synthetic Disclosure Detected';
           textWrap.appendChild(strong);
 
+          if (decision.action !== 'none' && decision.sourceName) {
+            appendSegmentSep(textWrap);
+            const src = document.createElement('span');
+            src.className = 'ng-strip-muted';
+            src.textContent = decision.sourceName;
+            textWrap.appendChild(src);
+          }
+
           if (decision.note) {
+            appendSegmentSep(textWrap);
             const noteSpan = document.createElement('span');
             noteSpan.className = 'ng-watch-bar-note';
             noteSpan.textContent = decision.note;
@@ -954,22 +1347,46 @@ export default defineContentScript({
           }
         }
 
-        if (metaItems.length > 0) {
-          const metaSpan = document.createElement('span');
-          metaSpan.className = 'ng-watch-bar-meta';
-          metaSpan.textContent =
-            (hasActionOrDisclosure ? '· ' : '') + metaItems.join(' · ');
-          textWrap.appendChild(metaSpan);
+        if (cachedShowTopic && topicShort) {
+          appendSegmentSep(textWrap);
+          const topicEl = document.createElement('span');
+          topicEl.className = 'ng-strip-item';
+          if (topicFull) topicEl.title = `Topic: ${topicFull}`;
+          topicEl.appendChild(createPhosphorSvg('television', 13));
+          const topicText = document.createElement('span');
+          topicText.textContent = topicShort;
+          topicEl.appendChild(topicText);
+          textWrap.appendChild(topicEl);
         }
 
-        left.appendChild(iconEl);
+        if (cachedShowMonetization) {
+          appendYppIndicator(
+            textWrap,
+            decision,
+            decision.monetizationInspected ? 'YPP: Unverified' : '',
+          );
+        }
+
+        if (decision.hasPaidPromotion) {
+          appendSegmentSep(textWrap);
+          const promoEl = document.createElement('span');
+          promoEl.className = 'ng-strip-item';
+          promoEl.appendChild(createPhosphorSvg('megaphone', 13));
+          const promoText = document.createElement('span');
+          promoText.textContent = 'Paid promotion';
+          promoEl.appendChild(promoText);
+          textWrap.appendChild(promoEl);
+        }
+
         left.appendChild(textWrap);
 
         const manageBtn = document.createElement('button');
         manageBtn.type = 'button';
         manageBtn.className = 'ng-watch-action-btn';
         manageBtn.appendChild(createPhosphorSvg('waveform', 13));
-        manageBtn.appendChild(document.createTextNode('Channel Controls'));
+        const btnText = document.createElement('span');
+        btnText.textContent = 'Channel Controls';
+        manageBtn.appendChild(btnText);
         manageBtn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -1014,7 +1431,7 @@ export default defineContentScript({
         location.pathname.startsWith('/user/');
 
       if (!isChannelPath) {
-        document.querySelector('.ng-channel-bar')?.remove();
+        document.querySelectorAll('.ng-channel-bar').forEach((el) => el.remove());
         return null;
       }
 
@@ -1030,7 +1447,7 @@ export default defineContentScript({
       }
 
       if (!chInfo || (!chInfo.channelId && !chInfo.handle)) {
-        document.querySelector('.ng-channel-bar')?.remove();
+        document.querySelectorAll('.ng-channel-bar').forEach((el) => el.remove());
         return null;
       }
 
@@ -1041,7 +1458,7 @@ export default defineContentScript({
       };
 
       const yppSignals = chInfo.yppSignals ?? [];
-      const chSig = `ch|${ref.channelId ?? ''}|${ref.handle ?? ''}|${yppSignals.join(',')}`;
+      const chSig = `ch|${ref.channelId ?? ''}|${ref.handle ?? ''}|${yppSignals.join(',')}|${chInfo.monetizationInspected ? '1' : '0'}`;
       if (!reportedTelemetrySignatures.has(chSig)) {
         reportedTelemetrySignatures.add(chSig);
         try {
@@ -1082,47 +1499,51 @@ export default defineContentScript({
       const browseRoot = document.querySelector(
         'ytd-browse[page-subtype="channels"]:not([hidden])',
       );
-      const headerHost = browseRoot?.querySelector<HTMLElement>(
-        '#page-header, ytd-c4-tabbed-header-renderer #inner-header-container',
-      );
-      if (!headerHost) return null;
+      if (!browseRoot) return null;
+
+      const mount = findChannelBarMount(browseRoot);
+      if (!mount) return null;
 
       const accentColor =
         decision.action === 'allow'
           ? '#10b981'
           : decision.action !== 'none'
-            ? getCategoryMeta(decision.category).accentColor
+            ? decision.category === 'topic-match' && decision.matchedTopic
+              ? TOPICS[decision.matchedTopic]?.accentColor ?? getCategoryMeta(decision.category).accentColor
+              : getCategoryMeta(decision.category).accentColor
             : '#94a3b8';
 
-      const parts: string[] = [];
-      if (decision.action !== 'none') {
-        parts.push(
-          decision.action === 'allow'
-            ? 'Trusted (Local Override)'
-            : `${decision.primaryLabel} · ${decision.sourceName}`,
-        );
-      }
-      if (cachedShowTopic) {
-        const topicLabel = decision.topics[0]
-          ? TOPICS[decision.topics[0]]?.label ?? decision.topics[0]
-          : decision.rawYouTubeCategory;
-        if (topicLabel) parts.push(`Topic: ${topicLabel}`);
-      }
-      if (cachedShowMonetization) {
-        parts.push(
-          formatMonetizationSummary(
-            decision.observedYppSignals,
-            decision.monetizationInspected,
-          ),
-        );
+      const topicMeta = decision.topics[0] ? TOPICS[decision.topics[0]] : undefined;
+      const topicShort = topicMeta?.shortLabel ?? decision.rawYouTubeCategory;
+      const topicFull = topicMeta?.label ?? decision.rawYouTubeCategory;
+      const hasYpp = hasObservedYppSignals(decision.observedYppSignals);
+
+      const chBarSig = [
+        ref.channelId ?? '',
+        ref.handle ?? '',
+        accentColor,
+        decision.action,
+        decision.category,
+        decision.primaryLabel,
+        decision.sourceName,
+        cachedShowTopic ? topicShort ?? '' : '',
+        cachedShowMonetization ? decision.observedYppSignals.join(',') : '',
+        cachedShowMonetization && decision.monetizationInspected ? '1' : '0',
+      ].join('::');
+
+      const allBars = Array.from(document.querySelectorAll<HTMLElement>('.ng-channel-bar'));
+      let existingBar: HTMLElement | null = null;
+      for (const candidate of allBars) {
+        if (!existingBar && browseRoot.contains(candidate)) {
+          existingBar = candidate;
+        } else {
+          candidate.remove();
+        }
       }
 
-      const barText = parts.join(' · ') || 'NoiseGate Channel Overview';
-      const chBarSig = `${ref.channelId ?? ''}|${ref.handle ?? ''}|${accentColor}|${barText}`;
-
-      const existingBar = browseRoot?.querySelector<HTMLElement>('.ng-channel-bar') ?? null;
       const bar = existingBar ?? document.createElement('div');
       bar.className = 'ng-channel-bar';
+      bar.dataset.ngDock = mount.dockVariant;
 
       if (bar.dataset.ngBarSig !== chBarSig) {
         bar.dataset.ngBarSig = chBarSig;
@@ -1131,21 +1552,84 @@ export default defineContentScript({
         const left = document.createElement('div');
         left.className = 'ng-watch-bar-left';
 
+        const meta =
+          decision.action !== 'none' && decision.action !== 'allow'
+            ? getCategoryMeta(decision.category)
+            : null;
+        const leadIcon: InPageIconName =
+          decision.action === 'allow'
+            ? 'shield-check'
+            : decision.action === 'hide'
+              ? 'prohibit'
+              : decision.action === 'dim'
+                ? 'eye-slash'
+                : meta
+                  ? meta.icon
+                  : 'waveform';
+
         const iconEl = document.createElement('span');
         iconEl.className = 'ng-watch-bar-icon';
-        iconEl.appendChild(createPhosphorSvg('waveform', 15));
+        iconEl.appendChild(createPhosphorSvg(leadIcon, 14));
         left.appendChild(iconEl);
 
-        const textSpan = document.createElement('span');
-        textSpan.className = 'ng-watch-bar-meta';
-        textSpan.textContent = barText;
-        left.appendChild(textSpan);
+        const segments = document.createElement('div');
+        segments.className = 'ng-watch-bar-text';
+
+        const statusStrong = document.createElement('strong');
+        statusStrong.className = 'ng-strip-strong';
+        statusStrong.textContent =
+          decision.action === 'allow'
+            ? 'Trusted'
+            : decision.action !== 'none'
+              ? decision.primaryLabel
+              : 'NoiseGate';
+        segments.appendChild(statusStrong);
+
+        if (decision.action !== 'none' && decision.sourceName) {
+          appendSegmentSep(segments);
+          const srcSpan = document.createElement('span');
+          srcSpan.className = 'ng-strip-muted';
+          srcSpan.textContent = decision.sourceName;
+          segments.appendChild(srcSpan);
+        }
+
+        if (cachedShowTopic && topicShort) {
+          appendSegmentSep(segments);
+          const topicEl = document.createElement('span');
+          topicEl.className = 'ng-strip-item';
+          if (topicFull) topicEl.title = `Topic: ${topicFull}`;
+          topicEl.appendChild(createPhosphorSvg('television', 13));
+          const topicText = document.createElement('span');
+          topicText.textContent = topicShort;
+          topicEl.appendChild(topicText);
+          segments.appendChild(topicEl);
+        }
+
+        if (cachedShowMonetization) {
+          const fallbackLabel =
+            decision.monetizationInspected
+              ? 'YPP: Unverified'
+              : decision.action === 'none'
+                ? 'Ready'
+                : 'YPP: Pending';
+          appendYppIndicator(segments, decision, fallbackLabel);
+        } else if (decision.action === 'none' && !topicShort && !hasYpp) {
+          appendSegmentSep(segments);
+          const readyEl = document.createElement('span');
+          readyEl.className = 'ng-strip-muted';
+          readyEl.textContent = 'Ready';
+          segments.appendChild(readyEl);
+        }
+
+        left.appendChild(segments);
 
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'ng-watch-action-btn';
-        btn.appendChild(createPhosphorSvg('tag', 13));
-        btn.appendChild(document.createTextNode('Channel Controls'));
+        btn.appendChild(createPhosphorSvg('waveform', 13));
+        const btnText = document.createElement('span');
+        btnText.textContent = 'Channel Controls';
+        btn.appendChild(btnText);
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -1164,8 +1648,15 @@ export default defineContentScript({
         }
       }
 
-      if (!existingBar) {
-        headerHost.insertAdjacentElement('afterend', bar);
+      if (mount.position === 'append') {
+        if (bar.parentElement !== mount.host) {
+          mount.host.appendChild(bar);
+        }
+      } else if (
+        bar.previousElementSibling !== mount.host ||
+        bar.parentElement !== mount.host.parentElement
+      ) {
+        mount.host.insertAdjacentElement('afterend', bar);
       }
 
       return {
@@ -1383,9 +1874,9 @@ export default defineContentScript({
         window.clearTimeout(navFallbackTimer);
         navFallbackTimer = null;
       }
-      document.querySelector('.ng-watch-bar')?.remove();
-      document.querySelector('.ng-watch-inline-trigger')?.remove();
-      document.querySelector('.ng-channel-bar')?.remove();
+      document.querySelectorAll('.ng-watch-bar').forEach((el) => el.remove());
+      document.querySelectorAll('.ng-watch-inline-trigger').forEach((el) => el.remove());
+      document.querySelectorAll('.ng-channel-bar').forEach((el) => el.remove());
     });
 
     window.addEventListener('popstate', () => {
@@ -1433,6 +1924,24 @@ export default defineContentScript({
         scheduleScan(true, 40);
       }
     });
+
+    const themeObserver = new MutationObserver(() => {
+      syncThemeAttribute();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['dark', 'light'],
+    });
+    const ytAppNode = document.querySelector('ytd-app, ytm-app');
+    if (ytAppNode) {
+      themeObserver.observe(ytAppNode, {
+        attributes: true,
+        attributeFilter: ['dark'],
+      });
+    }
+    window
+      .matchMedia('(prefers-color-scheme: dark)')
+      .addEventListener('change', syncThemeAttribute);
 
     const targetRoot = document.querySelector('ytd-app') ?? document.body;
     const observer = new MutationObserver((mutations) => {
