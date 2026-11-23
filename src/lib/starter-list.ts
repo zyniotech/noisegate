@@ -146,30 +146,3 @@ export const BUNDLED_AISLIST_TEST_SAMPLE: FilterListV1 = {
     },
   },
 };
-
-/**
- * Known preset URLs users can subscribe to with one click in Options (opt-in, not enabled by default).
- */
-export const PRESET_COMMUNITY_LISTS = [
-  {
-    name: 'Open Channel Directory — Topics & Signals (JSON v2)',
-    url: 'https://raw.githubusercontent.com/zyniotech/noisegate-lists/main/lists/starter-topics.json',
-    homepage: 'https://github.com/zyniotech/noisegate-lists',
-    defaultAction: 'label' as const,
-    note: 'Neutral, source-backed channel topics and verifiable disclosures.',
-  },
-  {
-    name: 'AiSList — Warnlist (Plain-Text, ~1.3k Channels)',
-    url: 'https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/aislist_warnlist.txt',
-    homepage: 'https://github.com/Override92/AiSList',
-    defaultAction: 'label' as const,
-    note: 'Medium-confidence AI channels from Override92/AiSList.',
-  },
-  {
-    name: 'AiSList — Full Blocklist (Plain-Text, ~70k Channels)',
-    url: 'https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/aislist_blocklist.txt',
-    homepage: 'https://github.com/Override92/AiSList',
-    defaultAction: 'dim' as const,
-    note: 'High-confidence AI channels from Override92/AiSList.',
-  },
-];

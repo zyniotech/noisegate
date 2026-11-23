@@ -188,4 +188,74 @@ describe('3-layer & topic/signal conflict resolver', () => {
 
     expect(decision.action).toBe('none');
   });
+
+  it('lets metadata-only (pass) topic directories feed topics and signals without flagging', () => {
+    const topicDirectoryMatch: ListMatchSource = {
+      listId: 'open-channel-topics',
+      listName: 'Open Channel Directory',
+      action: 'pass',
+      category: 'topic-match',
+      topics: ['science', 'education'],
+      signals: ['ypp-memberships'],
+    };
+
+    const neutral = resolveDecision({
+      ref: { channelId: 'UCYO_jab_esuFRV4b17AJtAw' },
+      settings: BASE_SETTINGS,
+      listMatches: [topicDirectoryMatch],
+    });
+    expect(neutral.action).toBe('none');
+    expect(neutral.topics).toEqual(['science', 'education']);
+    expect(neutral.observedYppSignals).toEqual(['ypp-memberships']);
+
+    const dimmedByTopic = resolveDecision({
+      ref: { channelId: 'UCYO_jab_esuFRV4b17AJtAw' },
+      settings: { ...BASE_SETTINGS, topicRules: { science: 'dim' } },
+      listMatches: [topicDirectoryMatch],
+    });
+    expect(dimmedByTopic.action).toBe('dim');
+    expect(dimmedByTopic.origin).toBe('topic');
+  });
+
+  it('keeps Paid Promotion strictly scoped to the sponsored video ID', () => {
+    const profile: ChannelProfile = {
+      channelKey: 'UC_x5XG1OV2P6uZZ5FSM9Ttw',
+      observedYouTubeCategories: {},
+      observedTopics: [],
+      yppSignals: [],
+      monetizationInspected: true,
+      paidPromotionVideoIds: ['dQw4w9WgXcQ'],
+      lastObservedAt: '2026-11-23T00:00:00Z',
+    };
+
+    const otherVideo = resolveDecision({
+      ref: { videoId: '9bZkp7q19f0', channelId: 'UC_x5XG1OV2P6uZZ5FSM9Ttw' },
+      settings: { ...BASE_SETTINGS, paidPromotionAction: 'label' },
+      listMatches: [],
+      channelProfile: profile,
+    });
+
+    expect(otherVideo.action).toBe('none');
+    expect(otherVideo.hasPaidPromotion).toBe(false);
+  });
+
+  it('guards against Object.prototype keys in local rules and topic maps', () => {
+    const profile: ChannelProfile = {
+      channelKey: 'UC_x5XG1OV2P6uZZ5FSM9Ttw',
+      observedYouTubeCategories: {},
+      observedTopics: ['constructor' as unknown as 'science'],
+      yppSignals: [],
+      monetizationInspected: false,
+      paidPromotionVideoIds: [],
+      lastObservedAt: '2026-11-23T00:00:00Z',
+    };
+
+    const decision = resolveDecision({
+      ref: { handle: 'constructor', channelId: 'UC_x5XG1OV2P6uZZ5FSM9Ttw' },
+      settings: BASE_SETTINGS,
+      listMatches: [],
+      channelProfile: profile,
+    });
+    expect(decision.action).toBe('none');
+  });
 });

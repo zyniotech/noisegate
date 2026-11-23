@@ -1,5 +1,5 @@
 import { getCategoryMeta, SELECTABLE_CATEGORIES } from './categories';
-import { formatHandle, sanitizeHttpUrl } from './normalize';
+import { formatHandle, isValidRepoSlug, sanitizeHttpUrl } from './normalize';
 import { createPhosphorSvg } from './phosphor-svg';
 import {
   DEFAULT_CORRECTION_ISSUE_URL,
@@ -15,6 +15,7 @@ import type {
   CategoryId,
   ChannelRef,
   LocalRuleAction,
+  ObservableSignalId,
   ResolvedDecision,
   TopicId,
 } from './types';
@@ -41,7 +42,7 @@ const POPOVER_CSS = `
     all: initial;
     position: fixed;
     inset: 0;
-    z-index: 2147483645;
+    z-index: 2147483647;
     pointer-events: none;
     font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -49,6 +50,12 @@ const POPOVER_CSS = `
 
   * {
     box-sizing: border-box;
+  }
+
+  button,
+  input,
+  select {
+    font-family: inherit;
   }
 
   .ng-backdrop {
@@ -124,32 +131,32 @@ const POPOVER_CSS = `
 
   .ng-panel[data-theme="dark"] {
     --ng-bg-solid: #0f1218;
-    --ng-bg-translucent: rgba(14, 17, 24, 0.94);
-    --ng-bg-subtle: rgba(24, 29, 39, 0.88);
-    --ng-bg-hover: rgba(36, 43, 57, 0.94);
-    --ng-border: rgba(255, 255, 255, 0.11);
+    --ng-bg-translucent: rgba(14, 17, 24, 0.96);
+    --ng-bg-subtle: rgba(24, 29, 39, 0.9);
+    --ng-bg-hover: rgba(36, 43, 57, 0.96);
+    --ng-border: rgba(255, 255, 255, 0.13);
     --ng-top-highlight: rgba(255, 255, 255, 0.09);
-    --ng-border-focus: rgba(248, 250, 252, 0.48);
+    --ng-border-focus: rgba(248, 250, 252, 0.62);
     --ng-fg: #f3f4f6;
     --ng-fg-muted: #94a3b8;
-    --ng-fg-dim: #64748b;
+    --ng-fg-dim: #94a3b8;
     --ng-link: #cbd5e1;
-    --ng-danger: #ef4444;
+    --ng-danger: #f87171;
   }
 
   .ng-panel[data-theme="light"] {
     --ng-bg-solid: #ffffff;
-    --ng-bg-translucent: rgba(255, 255, 255, 0.95);
+    --ng-bg-translucent: rgba(255, 255, 255, 0.97);
     --ng-bg-subtle: #f4f5f7;
-    --ng-bg-hover: #e8ecf1;
-    --ng-border: rgba(15, 23, 42, 0.13);
+    --ng-bg-hover: #e5e9f0;
+    --ng-border: rgba(15, 23, 42, 0.14);
     --ng-top-highlight: rgba(255, 255, 255, 0.8);
-    --ng-border-focus: rgba(15, 23, 42, 0.48);
+    --ng-border-focus: rgba(15, 23, 42, 0.56);
     --ng-fg: #0f172a;
     --ng-fg-muted: #475569;
-    --ng-fg-dim: #64748b;
-    --ng-link: #334155;
-    --ng-danger: #dc2626;
+    --ng-fg-dim: #475569;
+    --ng-link: #1e293b;
+    --ng-danger: #b91c1c;
   }
 
   .ng-header {
@@ -209,8 +216,13 @@ const POPOVER_CSS = `
     transform: scale(0.93);
   }
 
-  .ng-close-btn:focus-visible {
-    outline: 1px solid var(--ng-border-focus);
+  .ng-close-btn:focus-visible,
+  .ng-profile-topic-select:focus-visible,
+  .ng-clear-btn:focus-visible,
+  .ng-evidence-link:focus-visible,
+  .ng-community-link:focus-visible {
+    outline: 2px solid var(--ng-border-focus);
+    outline-offset: 1px;
   }
 
   .ng-body {
@@ -220,7 +232,6 @@ const POPOVER_CSS = `
     gap: 11px;
   }
 
-  /* Neutral Observed Profile Strip (Monetization & Topics) */
   .ng-profile-box {
     border: 1px solid var(--ng-border);
     border-radius: 7px;
@@ -262,7 +273,6 @@ const POPOVER_CSS = `
     background: var(--ng-bg-solid);
     color: var(--ng-fg);
     font-size: 11px;
-    font-family: inherit;
     max-width: 148px;
   }
 
@@ -306,6 +316,7 @@ const POPOVER_CSS = `
     text-decoration: none;
     font-size: 11px;
     font-weight: 500;
+    border-radius: 4px;
   }
 
   .ng-evidence-link:hover {
@@ -358,22 +369,29 @@ const POPOVER_CSS = `
     transition: background-color 110ms ease, border-color 110ms ease, color 110ms ease, transform 90ms ease-out;
   }
 
-  .ng-action-btn:hover {
+  .ng-action-btn:hover:not(:disabled) {
     background: var(--ng-bg-hover);
   }
 
-  .ng-action-btn:active {
+  .ng-action-btn:disabled,
+  .ng-clear-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .ng-action-btn:active:not(:disabled) {
     transform: scale(0.95);
   }
 
   .ng-action-btn:focus-visible {
-    outline: 1px solid var(--ng-border-focus);
+    outline: 2px solid var(--ng-border-focus);
+    outline-offset: 1px;
   }
 
   .ng-action-btn[data-active="true"] {
     border-color: var(--btn-accent, #f8fafc);
     background: var(--ng-bg-hover);
-    color: var(--btn-accent, #f8fafc);
+    color: var(--btn-accent-fg, var(--btn-accent, #f8fafc));
   }
 
   .ng-field {
@@ -392,7 +410,6 @@ const POPOVER_CSS = `
     background: var(--ng-bg-subtle);
     color: var(--ng-fg);
     font-size: 12px;
-    font-family: inherit;
     outline: none;
     transition: border-color 120ms ease;
   }
@@ -410,6 +427,7 @@ const POPOVER_CSS = `
     padding-top: 6px;
     border-top: 1px solid var(--ng-border);
     font-size: 11px;
+    flex-wrap: wrap;
   }
 
   .ng-community-link {
@@ -419,6 +437,7 @@ const POPOVER_CSS = `
     color: var(--ng-fg-muted);
     text-decoration: none;
     font-weight: 500;
+    border-radius: 4px;
     transition: color 100ms ease;
   }
 
@@ -453,11 +472,11 @@ const POPOVER_CSS = `
     transition: background-color 110ms ease, transform 90ms ease-out;
   }
 
-  .ng-clear-btn:hover {
+  .ng-clear-btn:hover:not(:disabled) {
     background: var(--ng-bg-hover);
   }
 
-  .ng-clear-btn:active {
+  .ng-clear-btn:active:not(:disabled) {
     transform: scale(0.96);
   }
 `;
@@ -466,10 +485,23 @@ export class InPagePopoverManager {
   private host: HTMLDivElement | null = null;
   private shadow: ShadowRoot | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private scrollHandler: ((e: Event) => void) | null = null;
+  private resizeHandler: (() => void) | null = null;
+  private fullscreenHandler: (() => void) | null = null;
   private closeTimer: number | null = null;
+  private lastAnchor: HTMLElement | null = null;
+  private openToken = 0;
+
+  private getMountRoot(): HTMLElement {
+    if (document.fullscreenElement instanceof HTMLElement) {
+      return document.fullscreenElement;
+    }
+    return document.body || document.documentElement;
+  }
 
   private ensureHost(): ShadowRoot {
-    if (this.host && this.shadow && document.body.contains(this.host)) {
+    const mountRoot = this.getMountRoot();
+    if (this.host && this.shadow && this.host.parentElement === mountRoot) {
       return this.shadow;
     }
 
@@ -484,10 +516,29 @@ export class InPagePopoverManager {
     style.textContent = POPOVER_CSS;
     shadow.appendChild(style);
 
-    document.body.appendChild(host);
+    mountRoot.appendChild(host);
     this.host = host;
     this.shadow = shadow;
     return shadow;
+  }
+
+  private removeListeners(): void {
+    if (this.keydownHandler) {
+      window.removeEventListener('keydown', this.keydownHandler, true);
+      this.keydownHandler = null;
+    }
+    if (this.scrollHandler) {
+      window.removeEventListener('scroll', this.scrollHandler, true);
+      this.scrollHandler = null;
+    }
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler);
+      this.resizeHandler = null;
+    }
+    if (this.fullscreenHandler) {
+      document.removeEventListener('fullscreenchange', this.fullscreenHandler);
+      this.fullscreenHandler = null;
+    }
   }
 
   private clearDomImmediate(): void {
@@ -495,82 +546,70 @@ export class InPagePopoverManager {
       window.clearTimeout(this.closeTimer);
       this.closeTimer = null;
     }
-    if (this.keydownHandler) {
-      window.removeEventListener('keydown', this.keydownHandler, true);
-      this.keydownHandler = null;
-    }
+    this.removeListeners();
     if (this.shadow) {
       const style = this.shadow.querySelector('style');
-      this.shadow.innerHTML = '';
+      this.shadow.replaceChildren();
       if (style) this.shadow.appendChild(style);
     }
   }
 
-  public close(): void {
-    if (this.keydownHandler) {
-      window.removeEventListener('keydown', this.keydownHandler, true);
-      this.keydownHandler = null;
+  public close(restoreFocus = false): void {
+    this.openToken++;
+    if (this.closeTimer !== null) {
+      window.clearTimeout(this.closeTimer);
+      this.closeTimer = null;
     }
+    this.removeListeners();
+
+    const anchorToRestore = restoreFocus ? this.lastAnchor : null;
+    this.lastAnchor = null;
+
     const panel = this.shadow?.querySelector<HTMLElement>('.ng-panel');
     if (!panel) {
       this.clearDomImmediate();
+      if (anchorToRestore && anchorToRestore.isConnected) {
+        anchorToRestore.focus();
+      }
       return;
     }
     panel.dataset.closing = 'true';
     this.closeTimer = window.setTimeout(() => {
       this.clearDomImmediate();
+      if (anchorToRestore && anchorToRestore.isConnected) {
+        anchorToRestore.focus();
+      }
     }, 105);
   }
 
   public open(ctx: PopoverContext): void {
     this.clearDomImmediate();
+    const myToken = ++this.openToken;
+    this.lastAnchor = ctx.anchor;
+
     const shadow = this.ensureHost();
 
-    const isDark =
-      document.documentElement.hasAttribute('dark') ||
-      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const hasYtApp = Boolean(document.querySelector('ytd-app'));
+    const isDark = hasYtApp
+      ? document.documentElement.hasAttribute('dark')
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
 
     const backdrop = document.createElement('div');
     backdrop.className = 'ng-backdrop';
     backdrop.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.close();
+      this.close(false);
     });
 
     const panel = document.createElement('div');
     panel.className = 'ng-panel';
     panel.dataset.theme = isDark ? 'dark' : 'light';
     panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
     panel.setAttribute('aria-label', 'NoiseGate Channel Controls');
+    panel.tabIndex = -1;
     panel.addEventListener('click', (e) => e.stopPropagation());
 
-    const rect = ctx.anchor.getBoundingClientRect();
-    const panelWidth = 332;
-    const estimatedHeight = 420;
-
-    let originX: 'left' | 'right' = 'right';
-    let left = rect.right - panelWidth;
-    if (left < 12) {
-      left = Math.max(12, rect.left);
-      originX = 'left';
-    }
-    if (left + panelWidth > window.innerWidth - 12) {
-      left = Math.max(12, window.innerWidth - panelWidth - 12);
-      originX = 'right';
-    }
-
-    let originY: 'top' | 'bottom' = 'top';
-    let top = rect.bottom + 6;
-    if (top + estimatedHeight > window.innerHeight - 12) {
-      top = Math.max(12, rect.top - estimatedHeight - 6);
-      originY = 'bottom';
-    }
-
-    panel.style.left = `${Math.round(left)}px`;
-    panel.style.top = `${Math.round(top)}px`;
-    panel.style.setProperty('--ng-origin', `${originY} ${originX}`);
-
-    // Header
     const header = document.createElement('div');
     header.className = 'ng-header';
 
@@ -580,7 +619,10 @@ export class InPagePopoverManager {
     const nameEl = document.createElement('div');
     nameEl.className = 'ng-channel-name';
     nameEl.textContent =
-      ctx.ref.channelName || formatHandle(ctx.ref.handle) || ctx.ref.channelId || 'YouTube Channel';
+      ctx.ref.channelName ||
+      formatHandle(ctx.ref.handle) ||
+      ctx.ref.channelId ||
+      'YouTube Channel';
 
     const metaParts: string[] = [];
     const dispHandle = formatHandle(ctx.ref.handle);
@@ -600,7 +642,7 @@ export class InPagePopoverManager {
     closeBtn.title = 'Close (Esc)';
     closeBtn.setAttribute('aria-label', 'Close channel menu');
     closeBtn.appendChild(createPhosphorSvg('x', 14));
-    closeBtn.addEventListener('click', () => this.close());
+    closeBtn.addEventListener('click', () => this.close(true));
 
     header.appendChild(titleGroup);
     header.appendChild(closeBtn);
@@ -609,7 +651,6 @@ export class InPagePopoverManager {
     const body = document.createElement('div');
     body.className = 'ng-body';
 
-    // Neutral Observed Metadata Box (Monetization + Paid Promotion + Topic)
     const profileBox = document.createElement('div');
     profileBox.className = 'ng-profile-box';
 
@@ -672,18 +713,12 @@ export class InPagePopoverManager {
       topicSelect.appendChild(opt);
     }
 
-    topicSelect.addEventListener('change', () => {
-      const val = topicSelect.value as TopicId | '';
-      void ctx.onUpdateTopics(ctx.ref, val ? [val] : undefined);
-    });
-
     topicRow.appendChild(topicLeft);
     topicRow.appendChild(topicSelect);
     profileBox.appendChild(topicRow);
 
     body.appendChild(profileBox);
 
-    // Existing list & official disclosure signals
     if (
       ctx.decision.listMatches.length > 0 ||
       ctx.decision.hasOfficialDisclosure
@@ -722,7 +757,7 @@ export class InPagePopoverManager {
         labelSpan.textContent = meta.shortLabel;
         const srcSpan = document.createElement('span');
         srcSpan.className = 'ng-signal-source';
-        srcSpan.textContent = `· ${match.listName} (${match.action})`;
+        srcSpan.textContent = `· ${match.listName} (${match.action === 'pass' ? 'meta' : match.action})`;
         head.appendChild(labelSpan);
         head.appendChild(srcSpan);
         item.appendChild(head);
@@ -778,13 +813,13 @@ export class InPagePopoverManager {
     noteInput.type = 'text';
     noteInput.className = 'ng-input';
     noteInput.placeholder = 'Optional note (stored locally)...';
+    noteInput.setAttribute('aria-label', 'Optional local note');
     noteInput.maxLength = 180;
     noteInput.value = ctx.decision.origin === 'local' ? ctx.decision.note ?? '' : '';
 
     fieldWrap.appendChild(catSelect);
     fieldWrap.appendChild(noteInput);
 
-    // 1-Click Local Action Buttons
     const actionsSection = document.createElement('div');
     const secRow = document.createElement('div');
     secRow.className = 'ng-section-row';
@@ -793,7 +828,7 @@ export class InPagePopoverManager {
     secLabel.textContent = '1-Click Local Action';
     const kbdHint = document.createElement('div');
     kbdHint.className = 'ng-kbd-hint';
-    kbdHint.textContent = '1–4 · Esc';
+    kbdHint.textContent = '1-4 · Esc';
     secRow.appendChild(secLabel);
     secRow.appendChild(kbdHint);
     actionsSection.appendChild(secRow);
@@ -805,25 +840,38 @@ export class InPagePopoverManager {
     statusText.className = 'ng-status-text';
     statusText.textContent =
       ctx.decision.origin === 'local'
-        ? `Local rule active (${ctx.decision.action})`
+        ? `Local rule active (${ctx.decision.action === 'allow' ? 'Trust' : ctx.decision.action})`
         : 'Local rules always override lists';
 
     const actionDefs: Array<{
       action: LocalRuleAction;
       label: string;
       icon: 'tag' | 'eye-slash' | 'prohibit' | 'shield-check';
-      accent: string;
+      accentDark: string;
+      accentLight: string;
     }> = [
-      { action: 'label', label: 'Label', icon: 'tag', accent: '#d97706' },
-      { action: 'dim', label: 'Dim', icon: 'eye-slash', accent: '#ea580c' },
-      { action: 'hide', label: 'Hide', icon: 'prohibit', accent: '#ef4444' },
-      { action: 'allow', label: 'Trust', icon: 'shield-check', accent: '#10b981' },
+      { action: 'label', label: 'Label', icon: 'tag', accentDark: '#fbbf24', accentLight: '#b45309' },
+      { action: 'dim', label: 'Dim', icon: 'eye-slash', accentDark: '#fb923c', accentLight: '#c2410c' },
+      { action: 'hide', label: 'Hide', icon: 'prohibit', accentDark: '#f87171', accentLight: '#b91c1c' },
+      { action: 'allow', label: 'Trust', icon: 'shield-check', accentDark: '#34d399', accentLight: '#047857' },
     ];
 
     const currentLocalAction =
       ctx.decision.origin === 'local' ? ctx.decision.action : undefined;
 
+    let isSubmitting = false;
+    const actionButtons: HTMLButtonElement[] = [];
+    let clearBtn: HTMLButtonElement | null = null;
+
+    const setBusyState = (busy: boolean) => {
+      isSubmitting = busy;
+      for (const b of actionButtons) b.disabled = busy;
+      if (clearBtn) clearBtn.disabled = busy;
+    };
+
     const triggerSave = async (action: LocalRuleAction) => {
+      if (isSubmitting) return;
+      setBusyState(true);
       statusText.textContent = 'Saving...';
       try {
         const chosenCat: CategoryId =
@@ -836,9 +884,14 @@ export class InPagePopoverManager {
           category: chosenCat,
           note: noteInput.value.trim() || undefined,
         });
-        this.close();
+        if (this.openToken === myToken) {
+          this.close(true);
+        }
       } catch {
-        statusText.textContent = 'Could not save rule';
+        if (this.openToken === myToken) {
+          statusText.textContent = 'Could not save rule';
+          setBusyState(false);
+        }
       }
     };
 
@@ -846,16 +899,20 @@ export class InPagePopoverManager {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'ng-action-btn';
-      btn.style.setProperty('--btn-accent', def.accent);
-      if (currentLocalAction === def.action) {
+      btn.style.setProperty('--btn-accent', isDark ? def.accentDark : def.accentLight);
+      btn.style.setProperty('--btn-accent-fg', isDark ? def.accentDark : def.accentLight);
+      const isActive = currentLocalAction === def.action;
+      if (isActive) {
         btn.dataset.active = 'true';
       }
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       btn.appendChild(createPhosphorSvg(def.icon, 16));
       const span = document.createElement('span');
       span.textContent = def.label;
       btn.appendChild(span);
 
       btn.addEventListener('click', () => void triggerSave(def.action));
+      actionButtons.push(btn);
       grid.appendChild(btn);
     }
 
@@ -863,41 +920,54 @@ export class InPagePopoverManager {
     body.appendChild(actionsSection);
     body.appendChild(fieldWrap);
 
-    // Zero-Cost Community GitHub Submission / Correction Row
+    const allObservableSignals: ObservableSignalId[] = [...ctx.decision.observedYppSignals];
+    if (ctx.decision.hasPaidPromotion) {
+      allObservableSignals.push('yt-paid-promotion');
+    }
+    if (ctx.decision.hasOfficialDisclosure) {
+      allObservableSignals.push('yt-synthetic-disclosure');
+    }
+
     const firstListSubmission = ctx.decision.listMatches.find((m) => m.submissionUrl)?.submissionUrl;
     const firstListRemoval = ctx.decision.listMatches.find((m) => m.removalUrl)?.removalUrl;
-    const repoBase = ctx.submissionRepo?.includes('/')
-      ? `https://github.com/${ctx.submissionRepo}/issues/new?template=channel-entry.yml`
+    const hasConfiguredSlug = isValidRepoSlug(ctx.submissionRepo);
+    const repoBase = hasConfiguredSlug
+      ? `https://github.com/${ctx.submissionRepo!.trim()}/issues/new?template=channel-entry.yml`
       : DEFAULT_SUBMISSION_ISSUE_URL;
-    const correctionBase = ctx.submissionRepo?.includes('/')
-      ? `https://github.com/${ctx.submissionRepo}/issues/new?template=correction.yml`
+    const correctionBase = hasConfiguredSlug
+      ? `https://github.com/${ctx.submissionRepo!.trim()}/issues/new?template=correction.yml`
       : DEFAULT_CORRECTION_ISSUE_URL;
 
-    const suggestHref = buildGitHubSubmissionUrl(
-      firstListSubmission ?? repoBase,
-      ctx.ref,
-      {
-        topics: ctx.decision.topics,
-        yppSignals: ctx.decision.observedYppSignals,
+    let suggestLink: HTMLAnchorElement | null = null;
+    const computeSuggestHref = (activeTopics: TopicId[]) =>
+      buildGitHubSubmissionUrl(firstListSubmission ?? repoBase, ctx.ref, {
+        topics: activeTopics,
+        yppSignals: allObservableSignals,
         rawYouTubeCategory: ctx.decision.rawYouTubeCategory,
         template: 'channel-entry.yml',
-      },
-    );
+      });
 
-    const correctionHref = buildGitHubSubmissionUrl(
-      firstListRemoval ?? correctionBase,
-      ctx.ref,
-      {
-        topics: ctx.decision.topics,
-        template: 'correction.yml',
-      },
-    );
+    const suggestHref = computeSuggestHref(ctx.decision.topics);
+
+    const correctionTarget =
+      firstListRemoval ??
+      (ctx.decision.listMatches.some((m) => m.submissionUrl)
+        ? correctionBase
+        : undefined);
+
+    const correctionHref = correctionTarget
+      ? buildGitHubSubmissionUrl(correctionTarget, ctx.ref, {
+          topics: ctx.decision.topics,
+          yppSignals: allObservableSignals,
+          template: 'correction.yml',
+        })
+      : undefined;
 
     if (suggestHref) {
       const commRow = document.createElement('div');
       commRow.className = 'ng-community-row';
 
-      const suggestLink = document.createElement('a');
+      suggestLink = document.createElement('a');
       suggestLink.className = 'ng-community-link';
       suggestLink.href = suggestHref;
       suggestLink.target = '_blank';
@@ -912,26 +982,65 @@ export class InPagePopoverManager {
         corrLink.href = correctionHref;
         corrLink.target = '_blank';
         corrLink.rel = 'noopener noreferrer';
-        corrLink.appendChild(document.createTextNode('Correction'));
+        corrLink.appendChild(document.createTextNode('Request correction'));
         commRow.appendChild(corrLink);
       }
 
       body.appendChild(commRow);
     }
 
+    topicSelect.addEventListener('change', async () => {
+      const val = topicSelect.value as TopicId | '';
+      const nextTopics: TopicId[] | undefined = val ? [val] : undefined;
+      topicSelect.disabled = true;
+      statusText.textContent = 'Updating topic...';
+      try {
+        await ctx.onUpdateTopics(ctx.ref, nextTopics);
+        if (this.openToken === myToken) {
+          if (val && Object.hasOwn(TOPICS, val)) {
+            autoOpt.textContent = `Auto (${TOPICS[val].shortLabel})`;
+          }
+          if (suggestLink) {
+            const updatedHref = computeSuggestHref(nextTopics ?? ctx.decision.topics);
+            if (updatedHref) suggestLink.href = updatedHref;
+          }
+          statusText.textContent = val ? `Topic set locally` : 'Topic set to auto';
+        }
+      } catch {
+        if (this.openToken === myToken) {
+          statusText.textContent = 'Could not update topic';
+        }
+      } finally {
+        if (this.openToken === myToken) {
+          topicSelect.disabled = false;
+        }
+      }
+    });
+
     const footer = document.createElement('div');
     footer.className = 'ng-footer';
     footer.appendChild(statusText);
 
     if (ctx.decision.origin === 'local') {
-      const clearBtn = document.createElement('button');
+      clearBtn = document.createElement('button');
       clearBtn.type = 'button';
       clearBtn.className = 'ng-clear-btn';
       clearBtn.textContent = 'Remove rule';
       clearBtn.addEventListener('click', async () => {
+        if (isSubmitting) return;
+        setBusyState(true);
         statusText.textContent = 'Removing...';
-        await ctx.onClear(ctx.ref);
-        this.close();
+        try {
+          await ctx.onClear(ctx.ref);
+          if (this.openToken === myToken) {
+            this.close(true);
+          }
+        } catch {
+          if (this.openToken === myToken) {
+            statusText.textContent = 'Could not remove rule';
+            setBusyState(false);
+          }
+        }
       });
       footer.appendChild(clearBtn);
     }
@@ -939,15 +1048,106 @@ export class InPagePopoverManager {
     body.appendChild(footer);
     panel.appendChild(body);
 
+    panel.style.visibility = 'hidden';
     shadow.appendChild(backdrop);
     shadow.appendChild(panel);
+
+    const rect = ctx.anchor.getBoundingClientRect();
+    const measured = panel.getBoundingClientRect();
+    const panelWidth = Math.max(240, measured.width || 332);
+    const panelHeight = Math.max(200, measured.height || 360);
+
+    let originX: 'left' | 'right' = 'right';
+    let left = rect.right - panelWidth;
+    if (left < 12) {
+      left = Math.max(12, rect.left);
+      originX = 'left';
+    }
+    if (left + panelWidth > window.innerWidth - 12) {
+      left = Math.max(12, window.innerWidth - panelWidth - 12);
+      originX = 'right';
+    }
+
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - 18);
+    const spaceAbove = Math.max(0, rect.top - 18);
+
+    let originY: 'top' | 'bottom' = 'top';
+    let top: number;
+    let maxHeight: number;
+
+    if (panelHeight <= spaceBelow || spaceBelow >= spaceAbove) {
+      originY = 'top';
+      top = Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - Math.min(panelHeight, window.innerHeight - 24) - 12));
+      maxHeight = Math.max(180, window.innerHeight - top - 12);
+    } else {
+      originY = 'bottom';
+      const usedHeight = Math.min(panelHeight, spaceAbove);
+      top = Math.max(12, rect.top - usedHeight - 6);
+      maxHeight = Math.max(180, rect.top - top - 6);
+    }
+
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
+    panel.style.maxHeight = `${Math.round(maxHeight)}px`;
+    panel.style.setProperty('--ng-origin', `${originY} ${originX}`);
+    panel.style.visibility = '';
+
+    closeBtn.focus();
+
+    this.scrollHandler = (e: Event) => {
+      const target = e.target as Node | null;
+      if (target && (panel.contains(target) || shadow.contains(target))) {
+        return;
+      }
+      this.close(false);
+    };
+    window.addEventListener('scroll', this.scrollHandler, true);
+
+    this.resizeHandler = () => {
+      this.close(false);
+    };
+    window.addEventListener('resize', this.resizeHandler);
+
+    this.fullscreenHandler = () => {
+      this.close(false);
+    };
+    document.addEventListener('fullscreenchange', this.fullscreenHandler);
 
     this.keydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        this.close();
+        e.stopPropagation();
+        this.close(true);
         return;
       }
+
+      if (e.key === 'Tab') {
+        const focusables = Array.from(
+          panel.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), select:not([disabled]), input:not([disabled]), a[href]',
+          ),
+        );
+        if (focusables.length > 0) {
+          const first = focusables[0]!;
+          const last = focusables[focusables.length - 1]!;
+          const active = shadow.activeElement;
+          if (e.shiftKey) {
+            if (!active || active === first || !panel.contains(active)) {
+              e.preventDefault();
+              last.focus();
+            }
+          } else {
+            if (!active || active === last || !panel.contains(active)) {
+              e.preventDefault();
+              first.focus();
+            }
+          }
+        }
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
       const activeInShadow = shadow.activeElement;
       if (
         activeInShadow instanceof HTMLInputElement ||
@@ -964,6 +1164,7 @@ export class InPagePopoverManager {
       const mapped = keyMap[e.key];
       if (mapped) {
         e.preventDefault();
+        e.stopPropagation();
         void triggerSave(mapped);
       }
     };

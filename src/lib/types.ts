@@ -133,11 +133,11 @@ export interface SubscribedListMeta {
   homepage?: string;
   submissionUrl?: string;
   removalUrl?: string;
-  /** 'bundled:aislist-test-sample' for bundled starter list, else https:// URL */
   url: string;
+  kind?: 'topics' | 'signals' | 'community';
   bundled?: boolean;
   enabled: boolean;
-  defaultAction: FilterAction;
+  defaultAction: TopicRuleAction;
   entryCount: number;
   format: FilterListFormat;
   etag?: string;
@@ -211,7 +211,7 @@ export interface UserSettings {
 export interface ListMatchSource {
   listId: string;
   listName: string;
-  action: FilterAction;
+  action: TopicRuleAction;
   category: string;
   topics: TopicId[];
   signals: string[];
@@ -278,7 +278,7 @@ export interface RegistryListEntry {
   homepage?: string;
   submissionUrl?: string;
   removalUrl?: string;
-  defaultAction: FilterAction;
+  defaultAction: TopicRuleAction;
   kind: 'topics' | 'signals' | 'community';
   maintainer: string;
 }
@@ -294,7 +294,17 @@ export interface PersonalExportV1 {
     name: string;
     url: string;
     enabled: boolean;
-    defaultAction: FilterAction;
+    defaultAction: TopicRuleAction;
+    kind?: 'topics' | 'signals' | 'community';
+    submissionUrl?: string;
+    removalUrl?: string;
     bundled?: boolean;
+  }>;
+  manualChannelTopics?: Array<{
+    channelKey: string;
+    channelId?: string;
+    handle?: string;
+    channelName?: string;
+    topics: TopicId[];
   }>;
 }

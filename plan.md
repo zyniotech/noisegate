@@ -1,4 +1,4 @@
-# NoiseGate — Project Plan
+# NoiseGate - Project Plan
 
 ## 1. Goal & Core Idea
 Free, open-source browser extension (Manifest V3) that labels, dims, or hides YouTube channels and videos based on transparent, user-chosen filter lists and verifiable signals (official YouTube synthetic disclosures, content farms, source-backed context notes).
@@ -12,15 +12,15 @@ Free, open-source browser extension (Manifest V3) that labels, dims, or hides Yo
 
 ## 2. Finalized Brand & Architecture
 
-- **Brand Identity:** **NoiseGate** — J1 *Pure Signal Wave* (anodized titanium octagon + recessed sapphire optical lens + machined gate shutter + luminous signal wave, zero status dot, zero play icon).
+- **Brand Identity:** **NoiseGate** - J1 *Pure Signal Wave* (anodized titanium octagon + recessed sapphire optical lens + machined gate shutter + luminous signal wave, zero status dot, zero play icon).
 - **Visual System:** Ultramono Titanium (`#0A0C10` canvas, `#11141B` surfaces, `#F8FAFC` signal white active states; color reserved exclusively for semantic filter states). Full spec in [docs/brand-guidelines.md](./docs/brand-guidelines.md).
 - **Framework & Build:** TypeScript + **WXT** (single codebase targeting Chrome, Edge, and Firefox on Manifest V3).
 - **UI Stack:**
   - **Popup & Options:** React + Tailwind CSS + `@phosphor-icons/react` (consistent weight, zero pill badges).
   - **In-Page YouTube Overlays:** Lightweight Vanilla TypeScript DOM + isolated Shadow DOM popover (zero React runtime overhead on YouTube feeds).
-- **Permissions:** `storage`, `alarms`, `host_permissions` (`*://*.youtube.com/*` and `https://*/*` for direct external filter list fetches; evaluate narrowing to `optional_host_permissions` before store submission).
+- **Permissions:** `storage`, `alarms`, `host_permissions` (`*://*.youtube.com/*`, `https://cdn.jsdelivr.net/*`, `https://raw.githubusercontent.com/*`) plus `optional_host_permissions` (`https://*/*` requested on demand for custom HTTPS list origins).
 - **Channel Resolution (`UC...` + `@handle`):**
-  - **MAIN-World Bridge (`youtube-bridge.content.ts`)**: Reads YouTube's internal Polymer / `ytInitialData` / `ytInitialPlayerResponse` objects directly on rendered cards and Watch pages to extract canonical `browseId` (`UC...`), `@handle`, channel name, video ID, and official synthetic-content disclosures — with zero extra network requests.
+  - **MAIN-World Bridge (`youtube-bridge.content.ts`)**: Reads YouTube's internal Polymer / `ytInitialData` / `ytInitialPlayerResponse` objects directly on rendered cards and Watch pages to extract canonical `browseId` (`UC...`), `@handle`, channel name, video ID, and official synthetic-content disclosures with zero extra network requests.
   - **Local Handle Cache:** Persists `@handle -> UC...` mappings in `browser.storage.local` as instant fallback.
 - **Data Storage & Batch Lookup:**
   - Background Service Worker fetches static filter lists periodically (`alarms`) and stores parsed entries in **IndexedDB** (`noisegate_cache`) with in-memory `O(1)` lookup maps by both `channelId` and normalized `@handle`.
@@ -59,6 +59,6 @@ Free, open-source browser extension (Manifest V3) that labels, dims, or hides Yo
 - [x] Write unit tests (schema, normalization, conflict resolution) and verify Chrome & Firefox MV3 builds.
 
 ### Milestone 3: Quality, Verification & Store Release
-- [ ] Performance stress-test on heavy YouTube feeds (zero layout jank, minimal DOM observers).
-- [ ] Write dedicated `PRIVACY.md` and evaluate narrowing `host_permissions` to `optional_host_permissions` for Chrome Web Store review.
-- [ ] Publish v1.0.0 open source on GitHub and submit to Chrome Web Store & Firefox Add-ons.
+- [x] Narrow `host_permissions` to YouTube + built-in CDN/GitHub hosts with `optional_host_permissions` (`https://*/*`) and maintain `PRIVACY.md`.
+- [x] Fix SPA telemetry isolation, infinite DOM/bridge rescan prevention, cross-world JSON bridge events, prototype-key guards, and WCAG AA contrast.
+- [ ] Chrome Web Store & Firefox Add-ons submission (`v1.0.0`).

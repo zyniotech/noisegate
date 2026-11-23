@@ -18,10 +18,14 @@ export async function sendRuntimeMessage<T>(request: RuntimeRequest): Promise<T>
   return response.data;
 }
 
-export async function fetchSnapshot(tabId?: number): Promise<StateSnapshot> {
+export async function fetchSnapshot(
+  tabId?: number,
+  includeDetails = true,
+): Promise<StateSnapshot> {
   return sendRuntimeMessage<StateSnapshot>({
     type: 'GET_STATE_SNAPSHOT',
     tabId,
+    includeDetails,
   });
 }
 

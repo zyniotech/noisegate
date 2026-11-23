@@ -13,7 +13,12 @@ export default defineConfig({
     description:
       'Label, dim, or hide YouTube channels using official synthetic disclosures, local rules, and open filter lists.',
     permissions: ['storage', 'alarms'],
-    host_permissions: ['*://*.youtube.com/*', 'https://*/*'],
+    host_permissions: [
+      '*://*.youtube.com/*',
+      'https://cdn.jsdelivr.net/*',
+      'https://raw.githubusercontent.com/*',
+    ],
+    optional_host_permissions: ['https://*/*'],
     icons: {
       16: 'icon/16.png',
       32: 'icon/32.png',
@@ -24,7 +29,7 @@ export default defineConfig({
       ? {
           browser_specific_settings: {
             gecko: {
-              id: 'noisegate@noisegate.local',
+              id: 'noisegate@zyniotech.github.io',
               strict_min_version: '128.0',
               data_collection_permissions: {
                 required: ['none'],

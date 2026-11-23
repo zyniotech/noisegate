@@ -70,11 +70,17 @@ export function createPhosphorSvg(
   svg.setAttribute('height', String(size));
   svg.setAttribute('fill', 'currentColor');
   svg.setAttribute('aria-hidden', 'true');
+  svg.style.width = `${size}px`;
+  svg.style.height = `${size}px`;
+  svg.style.flexShrink = '0';
   if (className) {
     svg.setAttribute('class', className);
   }
   const path = document.createElementNS(ns, 'path');
-  path.setAttribute('d', RAW_PHOSPHOR_PATHS[name]);
+  const d = Object.hasOwn(RAW_PHOSPHOR_PATHS, name)
+    ? RAW_PHOSPHOR_PATHS[name]
+    : RAW_PHOSPHOR_PATHS.tag;
+  path.setAttribute('d', d);
   svg.appendChild(path);
   return svg;
 }

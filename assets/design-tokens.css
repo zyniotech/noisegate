@@ -1,33 +1,28 @@
-/* NoiseGate — Ultramono Titanium Design Tokens */
 :root {
-  /* Primary & Optical Accents */
   --ng-signal-white: #f8fafc;
   --ng-platinum: #cbd5e1;
   --ng-sapphire: #38bdf8;
   --ng-sapphire-deep: #0e1c33;
 
-  /* Ultramono Titanium Surfaces */
+  --ng-canvas: #090b0f;
   --ng-bg: #0a0c10;
-  --ng-surface: #11141b;
+  --ng-surface: #10131a;
   --ng-surface-subtle: #171b24;
   --ng-surface-hover: #1e2430;
   --ng-border: #232936;
   --ng-border-strong: #323b4e;
 
-  /* Typography */
   --ng-text-primary: #f3f4f6;
-  --ng-text-secondary: #94a3b8;
-  --ng-text-muted: #64748b;
+  --ng-text-secondary: #cbd5e1;
+  --ng-text-muted: #94a3b8;
 
-  /* Semantic Signal Colors (used strictly for filter states) */
   --ng-semantic-trust: #10b981;
   --ng-semantic-label: #d97706;
   --ng-semantic-dim: #ea580c;
   --ng-semantic-hide: #ef4444;
   --ng-semantic-disclosure: #38bdf8;
 
-  /* Typography & Motion */
   --ng-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --ng-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ng-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --ng-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }

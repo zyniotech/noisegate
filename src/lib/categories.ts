@@ -80,7 +80,7 @@ export const CATEGORIES: Record<CategoryId, CategoryMeta> = {
     label: 'YPP Partner Signals Observed',
     shortLabel: 'YPP Monetized',
     description: 'Public YouTube Partner Program features (Memberships, Super Thanks, Shopping) observed.',
-    accentColor: '#cbd5e1', // platinum
+    accentColor: '#94a3b8',
     icon: 'currency-circle-dollar',
   },
   'topic-match': {
@@ -88,7 +88,7 @@ export const CATEGORIES: Record<CategoryId, CategoryMeta> = {
     label: 'Topic Filter Match',
     shortLabel: 'Topic',
     description: 'Matches a user-configured topic category preference.',
-    accentColor: '#94a3b8', // neutral slate
+    accentColor: '#94a3b8',
     icon: 'television',
   },
   custom: {
@@ -96,7 +96,7 @@ export const CATEGORIES: Record<CategoryId, CategoryMeta> = {
     label: 'Custom Note',
     shortLabel: 'Note',
     description: 'Custom personal label or context note.',
-    accentColor: '#64748b', // slate-500
+    accentColor: '#64748b',
     icon: 'tag',
   },
 };
@@ -111,17 +111,18 @@ export const SELECTABLE_CATEGORIES: CategoryMeta[] = [
 ];
 
 export function getCategoryMeta(category: string): CategoryMeta {
-  const key = category.trim().toLowerCase() as CategoryId;
-  if (key in CATEGORIES) {
+  const safeInput = typeof category === 'string' ? category : '';
+  const key = safeInput.trim().toLowerCase() as CategoryId;
+  if (Object.hasOwn(CATEGORIES, key)) {
     return CATEGORIES[key];
   }
-  const formatted = category
+  const formatted = safeInput
     .trim()
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
 
   return {
-    id: category,
+    id: safeInput,
     label: formatted || 'Labeled',
     shortLabel: formatted || 'Labeled',
     description: 'Category provided by an external filter list.',

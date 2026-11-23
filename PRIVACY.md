@@ -1,4 +1,4 @@
-# Privacy Policy — NoiseGate
+# Privacy Policy - NoiseGate
 
 NoiseGate is designed with a **zero-telemetry, local-first architecture**. Your browsing behavior, watch history, channel overrides, and filter preferences never leave your browser.
 
@@ -10,24 +10,26 @@ NoiseGate is designed with a **zero-telemetry, local-first architecture**. Your 
 
 ## Local Storage Only
 
-All extension data is stored locally in `browser.storage.local` inside your browser profile:
+All extension data stays strictly on your device across standard browser storage APIs:
 
-- Local channel rules (`Trust`, `Label`, `Dim`, `Hide`).
-- Your topic rule matrix, monetization display settings, and appearance preferences.
-- Locally observed channel metadata snapshots (`ng_channel_profiles`, up to a capped LRU window of recent channels) used solely for displaying factual telemetry in your own UI. You can clear all observed channel profiles anytime from **Options -> Topics & Signals -> Clear Observed Profiles** or reset everything from **Settings**.
-- Cached filter lists fetched from URLs you choose to subscribe to.
+- **`browser.storage.local`** - Persists your local channel rules (`Trust`, `Label`, `Dim`, `Hide`), topic rule matrix, monetization display preferences, subscribed list metadata, `@handle` -> `UC...` resolution cache (capped at 8,000 entries), observed synthetic disclosure video IDs (capped at 3,000 videos), and observed channel profile snapshots (`ng_channel_profiles`, capped at 5,000 channels) used exclusively to render factual UI metadata.
+- **IndexedDB (`noisegate_cache`)** - Stores parsed entries from subscribed community filter lists for fast local `O(1)` lookup without bloating extension settings storage.
+- **`browser.storage.session`** - Keeps transient active-tab card counts while your browser session is open so popup counters survive extension service worker idle restarts.
+
+You can clear cached disclosure records under **Options -> YouTube Disclosures -> Clear Cache**, clear cached channel profiles under **Options -> Topics & Signals -> Clear Profiles Cache**, or reset all local extension data anytime under **Options -> Settings & Backup -> Reset Everything**.
 
 ## Network Requests
 
-NoiseGate only initiates outbound network requests when:
+NoiseGate only initiates outbound **HTTPS** requests when:
 
-1. Fetching the open community directory manifest (`registry.json`) from `cdn.jsdelivr.net` / `raw.githubusercontent.com` when you open or refresh the Community Directory.
-2. Refreshing public filter lists (`https://*/*`) you have explicitly enabled or added by URL (using standard HTTP conditional caching via `ETag` / `If-None-Match`).
-3. Opening external submission/correction links in a new tab only when you explicitly click **Suggest metadata on GitHub** or **Request correction / removal**.
+1. Fetching the open community directory manifest (`registry.json`) from `cdn.jsdelivr.net` or `raw.githubusercontent.com` when opening or reloading the Community Directory.
+2. Refreshing public filter lists (`https://`) that you have enabled or explicitly subscribed to (using HTTP conditional requests via `ETag` / `If-None-Match`).
+3. Opening external submission/correction links in a new tab only when you explicitly click **Suggest metadata on GitHub** or **Request correction**.
 
 ## Browser Permissions Explained
 
-- `storage` — Persist local rules, settings, topic matrix, and cached filter lists on-device.
-- `alarms` — Schedule optional periodic refreshes of enabled filter lists in the background.
-- `*://*.youtube.com/*` — Read public player/page disclosures (`microformat`, paid promotion, synthetic disclosure, public YPP surface buttons) and apply your chosen `Label`, `Dim`, or `Hide` presentation locally.
-- `https://*/*` — Allow downloading user-configured HTTPS filter lists from custom sources you add.
+- `storage` - Persist local rules, settings, topic matrix, caches, and session telemetry on-device.
+- `alarms` - Schedule periodic background refreshes of enabled filter lists.
+- `*://*.youtube.com/*` - Read public player/page disclosures (`microformat`, paid promotion, synthetic disclosure, public YPP surface buttons) and apply your chosen `Label`, `Dim`, or `Hide` presentation locally.
+- `https://cdn.jsdelivr.net/*`, `https://raw.githubusercontent.com/*` - Fetch the built-in open community directory (`zyniotech/noisegate-lists`) and open lists hosted on GitHub/jsDelivr.
+- Optional `https://*/*` (`optional_host_permissions`) - Requested at runtime only if you manually subscribe to a custom third-party HTTPS filter list host.

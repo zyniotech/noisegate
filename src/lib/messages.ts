@@ -3,7 +3,6 @@ import type {
   ChannelDisclosureStats,
   ChannelProfile,
   ChannelRef,
-  FilterAction,
   LocalRule,
   LocalRuleAction,
   PageStats,
@@ -11,6 +10,7 @@ import type {
   ResolvedDecision,
   SubscribedListMeta,
   TopicId,
+  TopicRuleAction,
   UserSettings,
   YppSignalId,
 } from './types';
@@ -21,6 +21,12 @@ export interface EvaluateItem {
   handle?: string;
   channelName?: string;
   videoId?: string;
+}
+
+export interface RefreshListsOutcome {
+  lists: SubscribedListMeta[];
+  failedCount: number;
+  errors: Array<{ listId: string; name: string; error: string }>;
 }
 
 export type RuntimeRequest =
@@ -69,6 +75,7 @@ export type RuntimeRequest =
   | {
       type: 'GET_STATE_SNAPSHOT';
       tabId?: number;
+      includeDetails?: boolean;
     }
   | {
       type: 'UPDATE_SETTINGS';
@@ -77,15 +84,19 @@ export type RuntimeRequest =
   | {
       type: 'ADD_FILTER_LIST';
       url: string;
-      defaultAction: FilterAction;
+      defaultAction: TopicRuleAction;
       customName?: string;
+      listId?: string;
+      kind?: 'topics' | 'signals' | 'community';
+      submissionUrl?: string;
+      removalUrl?: string;
     }
   | {
       type: 'UPDATE_FILTER_LIST';
       listId: string;
       patch: {
         enabled?: boolean;
-        defaultAction?: FilterAction;
+        defaultAction?: TopicRuleAction;
         name?: string;
       };
     }
@@ -108,6 +119,9 @@ export type RuntimeRequest =
     }
   | {
       type: 'CLEAR_CHANNEL_PROFILES';
+    }
+  | {
+      type: 'RESET_ALL_DATA';
     }
   | {
       type: 'EXPORT_DATA';
@@ -142,7 +156,6 @@ export type RuntimeResponse<T = unknown> =
   | { ok: true; data: T }
   | { ok: false; error: string };
 
-/** Messages sent from background -> content script */
 export type ContentBroadcast =
   | { type: 'NOISEGATE_STATE_UPDATED' }
   | { type: 'NOISEGATE_SET_REVEAL_HIDDEN'; reveal: boolean };

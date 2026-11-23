@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowsClockwise,
   ArrowSquareOut,
-  CaretDown,
   Check,
   CheckCircle,
   CurrencyCircleDollar,
@@ -24,10 +23,23 @@ import {
   Warning,
   WarningCircle,
 } from '@phosphor-icons/react';
+import { browser } from 'wxt/browser';
+import { TitaniumSelect, type TitaniumSelectOption } from '@/components/TitaniumSelect';
 import { TitaniumSwitch } from '@/components/TitaniumSwitch';
 import { getCategoryMeta, SELECTABLE_CATEGORIES } from '@/lib/categories';
-import type { RegistrySnapshot, StateSnapshot } from '@/lib/messages';
-import { formatHandle, parseYouTubeChannelHref } from '@/lib/normalize';
+import type {
+  RefreshListsOutcome,
+  RegistrySnapshot,
+  StateSnapshot,
+} from '@/lib/messages';
+import {
+  formatHandle,
+  isValidRepoSlug,
+  normalizeChannelId,
+  normalizeHandle,
+  parseYouTubeChannelHref,
+  sanitizePublicHttpsUrl,
+} from '@/lib/normalize';
 import { BUNDLED_REGISTRY_ENTRIES } from '@/lib/registry';
 import {
   fetchSnapshot,
@@ -61,32 +73,66 @@ const ACTION_OPTIONS: Array<{ value: FilterAction; label: string }> = [
   { value: 'hide', label: 'Hide' },
 ];
 
-const TOPIC_RULE_OPTIONS: Array<{ value: TopicRuleAction; label: string }> = [
+const LIST_ACTION_OPTIONS: Array<TitaniumSelectOption<TopicRuleAction>> = [
+  { value: 'pass', label: 'Pass (Meta only)' },
+  { value: 'label', label: 'Label' },
+  { value: 'dim', label: 'Dim' },
+  { value: 'hide', label: 'Hide' },
+];
+
+const TOPIC_RULE_OPTIONS: Array<TitaniumSelectOption<TopicRuleAction>> = [
   { value: 'pass', label: 'Pass' },
   { value: 'label', label: 'Label' },
   { value: 'dim', label: 'Dim' },
   { value: 'hide', label: 'Hide' },
 ];
 
-const SELECT_CLASS =
-  'appearance-none w-full h-9 pl-3 pr-8 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white transition-[border-color] duration-120 focus:outline-none focus:border-white/50 disabled:opacity-40 cursor-pointer';
+const MONETIZED_ACTION_OPTIONS: Array<TitaniumSelectOption<TopicRuleAction>> =
+  TOPIC_RULE_OPTIONS.map((opt) => ({
+    value: opt.value,
+    label: opt.value === 'pass' ? `${opt.label} (Neutral info only - Recommended)` : opt.label,
+  }));
 
-const SELECT_SM_CLASS =
-  'appearance-none h-8 pl-2.5 pr-7 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[12px] text-slate-100 transition-[border-color] duration-120 focus:outline-none focus:border-white/50 cursor-pointer';
+const LOCAL_RULE_ACTION_OPTIONS: Array<TitaniumSelectOption<LocalRuleAction>> = [
+  { value: 'label', label: 'Label' },
+  { value: 'dim', label: 'Dim' },
+  { value: 'hide', label: 'Hide' },
+  { value: 'allow', label: 'Trust (Override)' },
+];
+
+const CATEGORY_OPTIONS: Array<TitaniumSelectOption<CategoryId>> = SELECTABLE_CATEGORIES.map(
+  (c) => ({ value: c.id as CategoryId, label: c.shortLabel }),
+);
+
+const AUTO_REFRESH_OPTIONS: Array<TitaniumSelectOption> = [
+  { value: '6', label: 'Every 6 hours' },
+  { value: '12', label: 'Every 12 hours' },
+  { value: '24', label: 'Every 24 hours' },
+  { value: '72', label: 'Every 3 days' },
+  { value: '168', label: 'Weekly' },
+];
+
+const IMPORT_MODE_OPTIONS: Array<TitaniumSelectOption<'merge' | 'replace'>> = [
+  { value: 'merge', label: 'Merge' },
+  { value: 'replace', label: 'Replace' },
+];
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>('lists');
   const [snapshot, setSnapshot] = useState<StateSnapshot | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [registry, setRegistry] = useState<RegistrySnapshot>({
     entries: BUNDLED_REGISTRY_ENTRIES,
     source: 'fallback',
   });
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  const [reloadingIndex, setReloadingIndex] = useState(false);
 
   const [listUrl, setListUrl] = useState('');
   const [listName, setListName] = useState('');
-  const [listAction, setListAction] = useState<FilterAction>('label');
+  const [listAction, setListAction] = useState<TopicRuleAction>('label');
 
   const [ruleSearch, setRuleSearch] = useState('');
   const [ruleFilter, setRuleFilter] = useState<LocalRuleAction | 'all'>('all');
@@ -95,7 +141,10 @@ export default function App() {
   const [newRuleCategory, setNewRuleCategory] = useState<CategoryId>('ai-synthetic');
   const [newRuleNote, setNewRuleNote] = useState('');
 
+  const [profileSearch, setProfileSearch] = useState('');
   const [repoInput, setRepoInput] = useState('');
+  const repoInitializedRef = useRef(false);
+  const storageTimerRef = useRef<number | null>(null);
 
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -106,30 +155,77 @@ export default function App() {
 
   const reload = useCallback(async () => {
     try {
-      const data = await fetchSnapshot();
+      const data = await fetchSnapshot(undefined, true);
       setSnapshot(data);
-      setRepoInput(data.settings.communitySubmissionRepo);
+      setLoadFailed(false);
+      if (!repoInitializedRef.current) {
+        setRepoInput(data.settings.communitySubmissionRepo);
+        repoInitializedRef.current = true;
+      }
     } catch (err) {
+      setLoadFailed(true);
       showNotice('error', err instanceof Error ? err.message : 'Failed to load state');
     }
   }, [showNotice]);
 
-  const loadRegistry = useCallback(async () => {
-    try {
-      const res = await sendRuntimeMessage<RegistrySnapshot>({ type: 'FETCH_REGISTRY' });
-      setRegistry(res);
-    } catch {
-      // Keep bundled fallback
-    }
-  }, []);
+  const loadRegistry = useCallback(
+    async (explicit = false) => {
+      if (explicit) setReloadingIndex(true);
+      try {
+        const res = await sendRuntimeMessage<RegistrySnapshot>({ type: 'FETCH_REGISTRY' });
+        setRegistry(res);
+        if (explicit && res.source === 'fallback') {
+          showNotice(
+            'error',
+            'Could not reach live community registry. Showing built-in index.',
+          );
+        } else if (explicit) {
+          showNotice('ok', 'Community directory index updated.');
+        }
+      } catch (err) {
+        if (explicit) {
+          showNotice(
+            'error',
+            err instanceof Error ? err.message : 'Could not reload community registry.',
+          );
+        }
+      } finally {
+        if (explicit) setReloadingIndex(false);
+      }
+    },
+    [showNotice],
+  );
 
   useEffect(() => {
     void reload();
-    void loadRegistry();
+    void loadRegistry(false);
+
+    const handleStorageChange = () => {
+      if (storageTimerRef.current !== null) {
+        window.clearTimeout(storageTimerRef.current);
+      }
+      storageTimerRef.current = window.setTimeout(() => {
+        storageTimerRef.current = null;
+        void reload();
+      }, 150);
+    };
+
+    browser.storage.onChanged.addListener(handleStorageChange);
+    return () => {
+      browser.storage.onChanged.removeListener(handleStorageChange);
+      if (storageTimerRef.current !== null) {
+        window.clearTimeout(storageTimerRef.current);
+      }
+    };
   }, [reload, loadRegistry]);
 
   const subscribedUrls = useMemo(
     () => new Set((snapshot?.subscribedLists ?? []).map((l) => l.url)),
+    [snapshot?.subscribedLists],
+  );
+
+  const subscribedIds = useMemo(
+    () => new Set((snapshot?.subscribedLists ?? []).map((l) => l.id)),
     [snapshot?.subscribedLists],
   );
 
@@ -173,16 +269,69 @@ export default function App() {
     });
   }, [snapshot?.localRules, ruleFilter, ruleSearch]);
 
+  const filteredProfiles = useMemo(() => {
+    const list = snapshot?.channelProfiles ?? [];
+    const q = profileSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (prof) =>
+        (prof.channelName ?? '').toLowerCase().includes(q) ||
+        (prof.handle ?? '').toLowerCase().includes(q) ||
+        (prof.channelId ?? '').toLowerCase().includes(q) ||
+        prof.channelKey.toLowerCase().includes(q) ||
+        prof.observedTopics.some((t) =>
+          (TOPICS[t]?.label ?? t).toLowerCase().includes(q),
+        ),
+    );
+  }, [snapshot?.channelProfiles, profileSearch]);
+
+  const ensureHostPermission = useCallback(async (safeUrl: string): Promise<void> => {
+    try {
+      const origin = `${new URL(safeUrl).origin}/*`;
+      if (
+        origin === 'https://raw.githubusercontent.com/*' ||
+        origin === 'https://cdn.jsdelivr.net/*'
+      ) {
+        return;
+      }
+      const permApi = browser.permissions;
+      if (!permApi) return;
+      const already = await permApi.contains({ origins: [origin] });
+      if (!already) {
+        const granted = await permApi.request({ origins: [origin] });
+        if (!granted) {
+          throw new Error(
+            `Permission denied for ${new URL(safeUrl).hostname}. External custom list requires host permission.`,
+          );
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Permission denied')) {
+        throw err;
+      }
+    }
+  }, []);
+
   const handleAddList = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedUrl = listUrl.trim();
-    if (!trimmedUrl) return;
+    if (!trimmedUrl) {
+      showNotice('error', 'Please enter a filter list HTTPS URL.');
+      return;
+    }
+    const safeUrl = sanitizePublicHttpsUrl(trimmedUrl);
+    if (!safeUrl) {
+      showNotice('error', 'Please enter a valid public HTTPS URL.');
+      return;
+    }
+
     setBusy('add-list');
     setNotice(null);
     try {
+      await ensureHostPermission(safeUrl);
       const added = await sendRuntimeMessage<SubscribedListMeta>({
         type: 'ADD_FILTER_LIST',
-        url: trimmedUrl,
+        url: safeUrl,
         defaultAction: listAction,
         customName: listName.trim() || undefined,
       });
@@ -204,11 +353,16 @@ export default function App() {
     setBusy(`registry:${entry.url}`);
     setNotice(null);
     try {
+      await ensureHostPermission(entry.url);
       const added = await sendRuntimeMessage<SubscribedListMeta>({
         type: 'ADD_FILTER_LIST',
         url: entry.url,
+        listId: entry.id,
         defaultAction: entry.defaultAction,
         customName: entry.name,
+        kind: entry.kind,
+        submissionUrl: entry.submissionUrl,
+        removalUrl: entry.removalUrl,
       });
       await reload();
       showNotice(
@@ -224,7 +378,7 @@ export default function App() {
 
   const handleUpdateList = async (
     listId: string,
-    patch: { enabled?: boolean; defaultAction?: FilterAction },
+    patch: { enabled?: boolean; defaultAction?: TopicRuleAction },
   ) => {
     setBusy(`list:${listId}`);
     try {
@@ -238,6 +392,12 @@ export default function App() {
   };
 
   const handleRemoveList = async (list: SubscribedListMeta) => {
+    const key = `remove-list:${list.id}`;
+    if (confirmKey !== key) {
+      setConfirmKey(key);
+      return;
+    }
+    setConfirmKey(null);
     setBusy(`remove:${list.id}`);
     try {
       await sendRuntimeMessage({ type: 'REMOVE_FILTER_LIST', listId: list.id });
@@ -254,9 +414,22 @@ export default function App() {
     setBusy(listId ? `refresh:${listId}` : 'refresh-all');
     setNotice(null);
     try {
-      await sendRuntimeMessage({ type: 'REFRESH_FILTER_LIST', listId });
+      const outcome = await sendRuntimeMessage<RefreshListsOutcome>({
+        type: 'REFRESH_FILTER_LIST',
+        listId,
+      });
       await reload();
-      showNotice('ok', listId ? 'Filter list refreshed.' : 'All active filter lists refreshed.');
+      if (outcome && outcome.failedCount > 0) {
+        const firstErr = outcome.errors[0];
+        showNotice(
+          'error',
+          firstErr
+            ? `${outcome.failedCount} list(s) failed to refresh (${firstErr.name}: ${firstErr.error}).`
+            : `${outcome.failedCount} list(s) failed to refresh.`,
+        );
+      } else {
+        showNotice('ok', listId ? 'Filter list refreshed.' : 'All active filter lists refreshed.');
+      }
     } catch (err) {
       showNotice('error', err instanceof Error ? err.message : 'Refresh failed');
     } finally {
@@ -283,10 +456,22 @@ export default function App() {
     if (!raw) return;
 
     const parsedHref = parseYouTubeChannelHref(raw);
-    const channelId = parsedHref.channelId ?? (raw.startsWith('UC') ? raw : undefined);
-    const handle =
-      parsedHref.handle ??
-      (!channelId ? (raw.startsWith('@') ? raw : `@${raw}`) : undefined);
+    let channelId = parsedHref.channelId ?? normalizeChannelId(raw);
+    let handle = parsedHref.handle;
+
+    if (!channelId && !handle) {
+      if (!raw.includes('/') && !raw.includes(':')) {
+        handle = normalizeHandle(raw);
+      }
+    }
+
+    if (!channelId && !handle) {
+      showNotice(
+        'error',
+        'Please enter a valid YouTube @handle, UC... channel ID, or /channel/UC... /@handle URL.',
+      );
+      return;
+    }
 
     setBusy('add-rule');
     setNotice(null);
@@ -320,10 +505,17 @@ export default function App() {
           channelName: rule.channelName,
         },
         action,
-        category: action === 'allow' ? 'verified-independent' : rule.category,
+        category:
+          action === 'allow'
+            ? 'verified-independent'
+            : rule.category === 'verified-independent'
+              ? 'custom'
+              : rule.category,
         note: rule.note,
       });
       await reload();
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Could not update rule');
     } finally {
       setBusy(null);
     }
@@ -337,54 +529,117 @@ export default function App() {
         ref: { id: ruleId },
       });
       await reload();
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Could not delete rule');
     } finally {
       setBusy(null);
     }
   };
 
-  const handleSettingPatch = async (patch: Record<string, unknown>) => {
+  const handleSettingPatch = async (patch: Record<string, unknown>): Promise<boolean> => {
     setBusy('settings');
     try {
       await sendRuntimeMessage({ type: 'UPDATE_SETTINGS', patch });
       await reload();
+      return true;
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Could not save setting');
+      return false;
     } finally {
       setBusy(null);
     }
   };
 
+  const handleSaveRepoSlug = async () => {
+    const cleaned = repoInput.trim() || 'zyniotech/noisegate-lists';
+    if (!isValidRepoSlug(cleaned)) {
+      showNotice(
+        'error',
+        'Repository slug must use "owner/repo" format (e.g. zyniotech/noisegate-lists).',
+      );
+      return;
+    }
+    const ok = await handleSettingPatch({ communitySubmissionRepo: cleaned });
+    if (ok) {
+      setRepoInput(cleaned);
+      showNotice('ok', `Saved community repo: ${cleaned}`);
+    }
+  };
+
   const handleTopicRuleChange = async (topicId: TopicId, action: TopicRuleAction) => {
-    if (!snapshot) return;
+    if (!snapshot || busy !== null) return;
     const nextTopicRules = { ...snapshot.settings.topicRules };
     if (action === 'pass') {
       delete nextTopicRules[topicId];
     } else {
       nextTopicRules[topicId] = action;
     }
+    setSnapshot((prev) =>
+      prev ? { ...prev, settings: { ...prev.settings, topicRules: nextTopicRules } } : prev,
+    );
     await handleSettingPatch({ topicRules: nextTopicRules });
   };
 
   const handleResetAllTopics = async () => {
-    await handleSettingPatch({ topicRules: {} });
-    showNotice('ok', 'All topic filters reset to Pass.');
+    const ok = await handleSettingPatch({ topicRules: {} });
+    if (ok) {
+      showNotice('ok', 'All topic filters reset to Pass.');
+    }
   };
 
   const handleClearDisclosures = async () => {
+    if (confirmKey !== 'clear-disclosures') {
+      setConfirmKey('clear-disclosures');
+      return;
+    }
+    setConfirmKey(null);
     setBusy('clear-disclosures');
     try {
       await sendRuntimeMessage({ type: 'CLEAR_DISCLOSURES' });
       await reload();
       showNotice('ok', 'Cleared locally cached YouTube disclosure records.');
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Could not clear disclosures');
     } finally {
       setBusy(null);
     }
   };
 
   const handleClearProfiles = async () => {
+    if (confirmKey !== 'clear-profiles') {
+      setConfirmKey('clear-profiles');
+      return;
+    }
+    setConfirmKey(null);
     setBusy('clear-profiles');
     try {
       await sendRuntimeMessage({ type: 'CLEAR_CHANNEL_PROFILES' });
       await reload();
-      showNotice('ok', 'Cleared locally observed channel topic and monetization profiles.');
+      showNotice(
+        'ok',
+        'Cleared locally observed channel topic and monetization profiles.',
+      );
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Could not clear profiles');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleResetAllData = async () => {
+    if (confirmKey !== 'reset-all') {
+      setConfirmKey('reset-all');
+      return;
+    }
+    setConfirmKey(null);
+    setBusy('reset-all');
+    try {
+      await sendRuntimeMessage({ type: 'RESET_ALL_DATA' });
+      repoInitializedRef.current = false;
+      await reload();
+      showNotice('ok', 'All local rules, profiles, disclosures, and custom lists were reset.');
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : 'Reset failed');
     } finally {
       setBusy(null);
     }
@@ -402,8 +657,10 @@ export default function App() {
       const stamp = new Date().toISOString().slice(0, 10);
       a.href = url;
       a.download = `noisegate-backup-${stamp}.json`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       showNotice('ok', 'Exported local rules, settings, and subscribed lists.');
     } catch (err) {
       showNotice('error', err instanceof Error ? err.message : 'Export failed');
@@ -415,6 +672,15 @@ export default function App() {
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (
+      importMode === 'replace' &&
+      !window.confirm(
+        'Replace mode overwrites all existing local rules, settings, and subscribed lists with the imported file. Continue?',
+      )
+    ) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     setBusy('import');
     setNotice(null);
     try {
@@ -423,16 +689,25 @@ export default function App() {
       const result = await sendRuntimeMessage<{
         importedRules: number;
         importedLists: number;
+        failedLists?: string[];
       }>({
         type: 'IMPORT_DATA',
         payload: parsed,
         mode: importMode,
       });
+      repoInitializedRef.current = false;
       await reload();
-      showNotice(
-        'ok',
-        `Imported ${result.importedRules} local rules and ${result.importedLists} filter lists (${importMode}).`,
-      );
+      if (result.failedLists && result.failedLists.length > 0) {
+        showNotice(
+          'error',
+          `Imported ${result.importedRules} rules and ${result.importedLists} lists, but ${result.failedLists.length} remote list(s) failed to download.`,
+        );
+      } else {
+        showNotice(
+          'ok',
+          `Imported ${result.importedRules} local rules and ${result.importedLists} filter lists (${importMode}).`,
+        );
+      }
     } catch (err) {
       showNotice('error', err instanceof Error ? err.message : 'Import failed');
     } finally {
@@ -447,13 +722,12 @@ export default function App() {
     <div className="min-h-[100dvh] bg-[#090b0f] text-[#f3f4f6]">
       <div className="h-px w-full bg-gradient-to-r from-transparent via-white/[0.16] to-transparent" />
 
-      {/* Top Shell — Ultramono Titanium */}
       <header className="border-b border-white/[0.08] bg-[#0d1016]">
-        <div className="max-w-[980px] mx-auto px-6 pt-6">
+        <div className="max-w-[980px] mx-auto px-4 sm:px-6 pt-6">
           <div className="flex flex-wrap items-center justify-between gap-4 pb-5">
             <div className="flex items-center gap-3.5">
               <img
-                src="/icon/48.png"
+                src="/icon/128.png"
                 alt="NoiseGate"
                 className="w-9 h-9 block shrink-0 drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]"
               />
@@ -461,7 +735,7 @@ export default function App() {
                 <h1 className="text-[18px] font-semibold tracking-[-0.02em] text-white leading-tight">
                   NoiseGate
                 </h1>
-                <p className="text-[12.5px] text-slate-400 mt-0.5">
+                <p className="text-[12.5px] text-slate-300 mt-0.5">
                   Neutral channel signals, topic controls, and transparent filter lists.
                 </p>
               </div>
@@ -483,36 +757,38 @@ export default function App() {
             )}
           </div>
 
-          {/* 3-Layer + Topics Instrumentation Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-white/[0.07] border-t border-white/[0.06] py-3 mb-2 text-[12px]">
-            <div className="pr-4 flex items-baseline justify-between gap-2">
-              <span className="text-slate-500">Observed Profiles</span>
-              <span className="font-mono text-slate-200 tabular">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-0 sm:divide-x sm:divide-white/[0.07] border-t border-white/[0.06] py-3 mb-2 text-[12px]">
+            <div className="sm:pr-4 flex items-baseline justify-between gap-2">
+              <span className="text-slate-400">Observed Profiles</span>
+              <span className="font-mono text-slate-100 tabular">
                 {snapshot?.channelProfiles.length ?? 0}
               </span>
             </div>
-            <div className="px-4 flex items-baseline justify-between gap-2">
-              <span className="text-slate-500">Topic Filters</span>
-              <span className="font-mono text-slate-200 tabular">
+            <div className="sm:px-4 flex items-baseline justify-between gap-2">
+              <span className="text-slate-400">Topic Filters</span>
+              <span className="font-mono text-slate-100 tabular">
                 {activeTopicFiltersCount}
               </span>
             </div>
-            <div className="px-4 flex items-baseline justify-between gap-2">
-              <span className="text-slate-500">Local Rules</span>
-              <span className="font-mono text-slate-200 tabular">
+            <div className="sm:px-4 flex items-baseline justify-between gap-2">
+              <span className="text-slate-400">Local Rules</span>
+              <span className="font-mono text-slate-100 tabular">
                 {snapshot?.localRules.length ?? 0}
               </span>
             </div>
-            <div className="pl-4 flex items-baseline justify-between gap-2">
-              <span className="text-slate-500">Active List Entries</span>
-              <span className="font-mono text-slate-200 tabular">
+            <div className="sm:pl-4 flex items-baseline justify-between gap-2">
+              <span className="text-slate-400">Active List Entries</span>
+              <span className="font-mono text-slate-100 tabular">
                 {totalActiveEntries.toLocaleString()}
               </span>
             </div>
           </div>
 
-          {/* Flat Underlined Navigation Tabs */}
-          <nav className="flex flex-wrap items-center gap-6 -mb-px text-[13px] border-t border-white/[0.06] pt-3">
+          <nav
+            role="tablist"
+            aria-label="NoiseGate sections"
+            className="flex items-center gap-5 sm:gap-6 -mb-px text-[13px] border-t border-white/[0.06] pt-3 overflow-x-auto no-scrollbar whitespace-nowrap"
+          >
             {(
               [
                 {
@@ -552,20 +828,23 @@ export default function App() {
                 <button
                   key={key}
                   type="button"
+                  role="tab"
+                  aria-selected={active}
                   onClick={() => {
                     setTab(key);
                     setNotice(null);
+                    setConfirmKey(null);
                   }}
-                  className={`pb-3 flex items-center gap-2 border-b-2 transition-[color,border-color] duration-120 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/45 rounded-t cursor-pointer ${
+                  className={`pb-3 shrink-0 flex items-center gap-2 border-b-2 transition-[color,border-color] duration-120 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded-t cursor-pointer ${
                     active
                       ? 'border-white text-white font-medium'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                      : 'border-transparent text-slate-400 hover:text-slate-100'
                   }`}
                 >
                   <Icon size={15} weight={active ? 'fill' : 'regular'} />
                   <span>{label}</span>
                   {count !== null && (
-                    <span className="text-[11px] font-mono text-slate-500 tabular">{count}</span>
+                    <span className="text-[11px] font-mono text-slate-400 tabular">{count}</span>
                   )}
                 </button>
               );
@@ -574,35 +853,50 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-[980px] mx-auto px-6 py-7">
+      <main className="max-w-[980px] mx-auto px-4 sm:px-6 py-7" role="tabpanel">
         {notice && (
           <div
-            className={`mb-6 px-4 py-2.5 border-l-2 text-[13px] flex items-center justify-between gap-3 ${
+            role="alert"
+            aria-live="polite"
+            className={`mb-6 px-4 py-2.5 border-l-2 text-[13px] flex items-start sm:items-center justify-between gap-3 ${
               notice.kind === 'error'
-                ? 'border-red-500 bg-red-950/25 text-red-300'
-                : 'border-slate-300 bg-white/[0.04] text-slate-200'
+                ? 'border-red-500 bg-red-950/30 text-red-200'
+                : 'border-slate-300 bg-white/[0.04] text-slate-100'
             }`}
           >
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-start sm:items-center gap-2 min-w-0">
               {notice.kind === 'error' ? (
-                <WarningCircle size={15} className="shrink-0 text-red-400" />
+                <WarningCircle size={15} className="shrink-0 text-red-400 mt-0.5 sm:mt-0" />
               ) : (
-                <CheckCircle size={15} className="shrink-0 text-slate-300" />
+                <CheckCircle size={15} className="shrink-0 text-slate-300 mt-0.5 sm:mt-0" />
               )}
-              <span className="truncate">{notice.text}</span>
+              <span className="break-words min-w-0">{notice.text}</span>
             </div>
             <button
               type="button"
               onClick={() => setNotice(null)}
-              className="text-xs text-slate-400 hover:text-white shrink-0 cursor-pointer"
+              className="text-xs text-slate-300 hover:text-white shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 rounded px-1 cursor-pointer"
             >
               Dismiss
             </button>
           </div>
         )}
 
-        {/* TAB 1: FILTER LISTS & OPEN REGISTRY */}
+        {loadFailed && !snapshot && (
+          <div className="border border-white/[0.08] rounded-lg bg-[#10131a] p-6 flex flex-wrap items-center justify-between gap-4 mb-6">
+            <div className="text-[13px] text-slate-300">
+              Failed to load NoiseGate extension data from background worker.
+            </div>
+            <button
+              type="button"
+              onClick={() => void reload()}
+              className="h-8 px-3 rounded-md bg-[#f8fafc] text-[#0a0c10] font-semibold text-[12px] cursor-pointer"
+            >
+              Retry Load
+            </button>
+          </div>
+        )}
+
         {tab === 'lists' && (
           <div className="space-y-8">
             <section className="border border-white/[0.08] rounded-lg bg-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] p-5">
@@ -610,51 +904,45 @@ export default function App() {
                 <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-white">
                   Subscribe to an External Filter List
                 </h2>
-                <p className="text-[12px] text-slate-400 mt-0.5">
+                <p className="text-[12px] text-slate-300 mt-0.5">
                   Supports NoiseGate JSON v1/v2 and plain-text AiSList format (
-                  <code className="text-slate-200 font-mono">@handle</code> or{' '}
-                  <code className="text-slate-200 font-mono">UC...</code> per line).
+                  <code className="text-slate-100 font-mono">@handle</code> or{' '}
+                  <code className="text-slate-100 font-mono">UC...</code> per line).
                 </p>
               </div>
 
               <form onSubmit={handleAddList} className="grid grid-cols-1 md:grid-cols-12 gap-3 mt-4">
                 <input
-                  type="url"
+                  type="text"
                   required
                   value={listUrl}
                   onChange={(e) => setListUrl(e.target.value)}
+                  aria-label="Filter list HTTPS URL"
                   placeholder="https://raw.githubusercontent.com/.../list.json or .txt"
-                  className="md:col-span-6 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-500 transition-[border-color] duration-120 focus:outline-none focus:border-white/50"
+                  className="md:col-span-5 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-400 transition-[border-color] duration-120 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
                 />
                 <input
                   type="text"
                   value={listName}
                   onChange={(e) => setListName(e.target.value)}
-                  placeholder="Custom label (optional)"
-                  className="md:col-span-2 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-500 transition-[border-color] duration-120 focus:outline-none focus:border-white/50"
+                  aria-label="Optional custom list label"
+                  placeholder="Label (optional)"
+                  className="md:col-span-3 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-400 transition-[border-color] duration-120 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
                 />
-                <div className="relative md:col-span-2">
-                  <select
+                <div className="md:col-span-2">
+                  <TitaniumSelect
                     value={listAction}
-                    onChange={(e) => setListAction(e.target.value as FilterAction)}
-                    aria-label="Default action for list"
-                    className={SELECT_CLASS}
-                  >
-                    {ACTION_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        Action: {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <CaretDown
-                    size={13}
-                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                    options={LIST_ACTION_OPTIONS}
+                    onChange={setListAction}
+                    ariaLabel="Default action for list"
+                    triggerPrefix="Action: "
+                    align="right"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={busy === 'add-list'}
-                  className="md:col-span-2 h-9 px-3 rounded-md bg-[#f8fafc] hover:bg-slate-200 text-[#0a0c10] font-semibold text-[13px] flex items-center justify-center gap-1.5 transition-[background-color,transform,opacity] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#10131a] disabled:opacity-50 cursor-pointer"
+                  className="md:col-span-2 h-9 px-3 rounded-md bg-[#f8fafc] hover:bg-slate-200 text-[#0a0c10] font-semibold text-[13px] flex items-center justify-center gap-1.5 transition-[background-color,transform,opacity] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#10131a] disabled:opacity-50 cursor-pointer"
                 >
                   <Plus size={15} weight="bold" />
                   <span>{busy === 'add-list' ? 'Loading...' : 'Subscribe'}</span>
@@ -662,19 +950,18 @@ export default function App() {
               </form>
             </section>
 
-            {/* Subscribed Lists */}
             <section>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-400">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-300">
                   Subscribed Lists
                 </h2>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {!hasStarterList && (
                     <button
                       type="button"
                       onClick={handleRestoreStarter}
                       disabled={busy === 'restore-starter'}
-                      className="h-7 px-2.5 rounded-md border border-white/[0.1] bg-[#141821] hover:bg-[#1c2230] text-[12px] text-slate-200 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] cursor-pointer"
+                      className="h-7 px-2.5 rounded-md border border-white/[0.1] bg-[#141821] hover:bg-[#1c2230] text-[12px] text-slate-200 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-50 cursor-pointer"
                     >
                       Restore 25-Channel Test Sample
                     </button>
@@ -683,20 +970,20 @@ export default function App() {
                     type="button"
                     onClick={() => handleRefreshLists()}
                     disabled={busy === 'refresh-all'}
-                    className="h-7 px-2.5 rounded-md border border-white/[0.1] bg-[#141821] hover:bg-[#1c2230] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] text-[12px] text-slate-200 inline-flex items-center gap-1.5 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/45 cursor-pointer"
+                    className="h-7 px-2.5 rounded-md border border-white/[0.1] bg-[#141821] hover:bg-[#1c2230] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] text-[12px] text-slate-200 inline-flex items-center gap-1.5 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-50 cursor-pointer"
                   >
                     <ArrowsClockwise
                       size={13}
                       className={busy === 'refresh-all' ? 'animate-spin' : ''}
                     />
-                    <span>Refresh All</span>
+                    <span>{busy === 'refresh-all' ? 'Refreshing...' : 'Refresh All'}</span>
                   </button>
                 </div>
               </div>
 
               <div className="border border-white/[0.08] rounded-lg divide-y divide-white/[0.06] bg-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] overflow-hidden">
                 {(snapshot?.subscribedLists ?? []).length === 0 ? (
-                  <div className="p-6 text-[13px] text-slate-400">
+                  <div className="p-6 text-[13px] text-slate-300">
                     No filter lists subscribed yet. Add a JSON or plain-text list URL above, or
                     subscribe from the Open Community Directory below.
                   </div>
@@ -708,7 +995,9 @@ export default function App() {
                         ? '#ef4444'
                         : list.defaultAction === 'dim'
                           ? '#ea580c'
-                          : '#cbd5e1';
+                          : list.defaultAction === 'label'
+                            ? '#d97706'
+                            : '#94a3b8';
 
                     const formatLabel =
                       list.format === 'json-v2'
@@ -716,6 +1005,8 @@ export default function App() {
                         : list.format === 'json-v1'
                           ? 'JSON v1'
                           : 'Plain-Text';
+
+                    const confirmingRemove = confirmKey === `remove-list:${list.id}`;
 
                     return (
                       <div
@@ -728,35 +1019,40 @@ export default function App() {
                             <TitaniumSwitch
                               size="sm"
                               checked={list.enabled}
+                              disabled={busy === `list:${list.id}`}
                               onChange={(checked) => handleUpdateList(list.id, { enabled: checked })}
                               label={`Enable ${list.name}`}
                             />
                             <span
                               className={`text-[14px] font-medium truncate ${
-                                list.enabled ? 'text-white' : 'text-slate-400'
+                                list.enabled ? 'text-white' : 'text-slate-300'
                               }`}
                             >
                               {list.name}
                             </span>
-                            <span className="text-[11px] font-mono text-slate-500 uppercase shrink-0">
+                            <span className="text-[11px] font-mono text-slate-400 uppercase shrink-0">
                               {formatLabel}
                             </span>
                             {list.bundled && (
-                              <span className="text-[11px] font-mono text-slate-400 shrink-0">
+                              <span className="text-[11px] font-mono text-slate-300 shrink-0">
                                 · Bundled Sample
                               </span>
                             )}
                           </div>
 
                           {list.description && (
-                            <p className="text-[12px] text-slate-400 mt-1.5 pl-11">
+                            <p className="text-[12px] text-slate-300 mt-1.5 pl-0 sm:pl-11">
                               {list.description}
                             </p>
                           )}
 
-                          <div className="mt-1.5 pl-11 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-slate-500 tabular">
+                          <div className="mt-1 pl-0 sm:pl-11 text-[11px] font-mono text-slate-400 truncate" title={list.url}>
+                            {list.url}
+                          </div>
+
+                          <div className="mt-1.5 pl-0 sm:pl-11 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-slate-400 tabular">
                             <span>
-                              <strong className="text-slate-300 font-medium">
+                              <strong className="text-slate-200 font-medium">
                                 {list.entryCount.toLocaleString()}
                               </strong>{' '}
                               entries
@@ -767,7 +1063,7 @@ export default function App() {
                                 href={list.homepage}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-slate-400 hover:text-white transition-[color] duration-100"
+                                className="inline-flex items-center gap-1 text-slate-300 hover:text-white transition-[color] duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 rounded"
                               >
                                 <span>Source</span>
                                 <ArrowSquareOut size={12} />
@@ -778,14 +1074,14 @@ export default function App() {
                                 href={list.submissionUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-slate-400 hover:text-white transition-[color] duration-100"
+                                className="inline-flex items-center gap-1 text-slate-300 hover:text-white transition-[color] duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 rounded"
                               >
                                 <GitBranch size={12} />
                                 <span>Suggest Entry</span>
                               </a>
                             )}
                             {list.lastError && (
-                              <span className="text-red-400 inline-flex items-center gap-1">
+                              <span className="text-red-300 inline-flex items-center gap-1">
                                 <Warning size={12} />
                                 {list.lastError}
                               </span>
@@ -793,29 +1089,19 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 pl-11 sm:pl-0 shrink-0">
-                          <div className="relative">
-                            <select
-                              value={list.defaultAction}
-                              onChange={(e) =>
-                                handleUpdateList(list.id, {
-                                  defaultAction: e.target.value as FilterAction,
-                                })
-                              }
-                              aria-label={`Default action for ${list.name}`}
-                              className={SELECT_SM_CLASS}
-                            >
-                              {ACTION_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                            <CaretDown
-                              size={12}
-                              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400"
-                            />
-                          </div>
+                        <div className="flex flex-wrap items-center gap-2 pl-0 sm:pl-0 shrink-0">
+                          <TitaniumSelect
+                            value={list.defaultAction}
+                            options={LIST_ACTION_OPTIONS}
+                            disabled={busy === `list:${list.id}`}
+                            onChange={(nextAction) =>
+                              handleUpdateList(list.id, { defaultAction: nextAction })
+                            }
+                            ariaLabel={`Default action for ${list.name}`}
+                            size="sm"
+                            fullWidth={false}
+                            align="right"
+                          />
 
                           <button
                             type="button"
@@ -823,7 +1109,7 @@ export default function App() {
                             aria-label={`Refresh ${list.name}`}
                             onClick={() => handleRefreshLists(list.id)}
                             disabled={busy === `refresh:${list.id}`}
-                            className="w-8 h-8 rounded-md border border-white/[0.08] bg-[#151923] hover:bg-[#1e2432] text-slate-300 flex items-center justify-center transition-[background-color,border-color,transform] duration-120 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/45 cursor-pointer"
+                            className="w-8 h-8 rounded-md border border-white/[0.08] bg-[#151923] hover:bg-[#1e2432] text-slate-300 flex items-center justify-center transition-[background-color,border-color,transform] duration-120 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-50 cursor-pointer"
                           >
                             <ArrowsClockwise
                               size={14}
@@ -831,16 +1117,36 @@ export default function App() {
                             />
                           </button>
 
-                          <button
-                            type="button"
-                            title="Remove list"
-                            aria-label={`Remove ${list.name}`}
-                            onClick={() => handleRemoveList(list)}
-                            disabled={busy === `remove:${list.id}`}
-                            className="w-8 h-8 rounded-md border border-white/[0.08] bg-[#151923] hover:bg-red-950/50 hover:border-red-500/40 text-slate-400 hover:text-red-400 flex items-center justify-center transition-[background-color,border-color,color,transform] duration-120 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400/50 cursor-pointer"
-                          >
-                            <Trash size={14} />
-                          </button>
+                          {confirmingRemove ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveList(list)}
+                                disabled={busy === `remove:${list.id}`}
+                                className="h-8 px-2.5 rounded-md border border-red-500/50 bg-red-950/60 text-red-200 text-[11.5px] font-medium hover:bg-red-900/60 cursor-pointer"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmKey(null)}
+                                className="h-8 px-2 rounded-md border border-white/[0.1] bg-[#151923] text-slate-300 text-[11.5px] cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              title="Remove list"
+                              aria-label={`Remove ${list.name}`}
+                              onClick={() => handleRemoveList(list)}
+                              disabled={busy === `remove:${list.id}`}
+                              className="w-8 h-8 rounded-md border border-white/[0.08] bg-[#151923] hover:bg-red-950/50 hover:border-red-500/40 text-slate-300 hover:text-red-300 flex items-center justify-center transition-[background-color,border-color,color,transform] duration-120 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 cursor-pointer"
+                            >
+                              <Trash size={14} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -849,55 +1155,63 @@ export default function App() {
               </div>
             </section>
 
-            {/* Open Community Directory (Zero-Cost GitHub / CDN Registry) */}
             <section>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <div>
-                  <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-400">
+                  <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-300">
                     Open Community Directory (Opt-In)
                   </h2>
-                  <p className="text-[12px] text-slate-500 mt-0.5">
-                    Static, GitHub-reviewed JSON v2 and plain-text lists ({registry.source === 'live' ? 'synced from zyniotech/noisegate-lists' : 'built-in index'}).
+                  <p className="text-[12px] text-slate-400 mt-0.5">
+                    Static, GitHub-reviewed JSON v2 and plain-text lists (
+                    {registry.source === 'live'
+                      ? 'synced from zyniotech/noisegate-lists'
+                      : 'built-in index'}
+                    ).
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => void loadRegistry()}
-                  className="h-7 px-2.5 rounded-md border border-white/[0.09] bg-[#141821] hover:bg-[#1c2230] text-[12px] text-slate-300 inline-flex items-center gap-1.5 transition-[background-color,transform] duration-120 active:scale-[0.97] cursor-pointer"
+                  disabled={reloadingIndex}
+                  onClick={() => void loadRegistry(true)}
+                  className="h-7 px-2.5 rounded-md border border-white/[0.09] bg-[#141821] hover:bg-[#1c2230] text-[12px] text-slate-200 inline-flex items-center gap-1.5 transition-[background-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-50 cursor-pointer"
                 >
-                  <ArrowsClockwise size={12} />
-                  <span>Reload Index</span>
+                  <ArrowsClockwise
+                    size={12}
+                    className={reloadingIndex ? 'animate-spin' : ''}
+                  />
+                  <span>{reloadingIndex ? 'Reloading...' : 'Reload Index'}</span>
                 </button>
               </div>
 
               <div className="border border-white/[0.08] rounded-lg divide-y divide-white/[0.06] bg-[#10131a] overflow-hidden">
                 {registry.entries.map((entry) => {
-                  const alreadyAdded = subscribedUrls.has(entry.url);
+                  const alreadyAdded =
+                    subscribedUrls.has(entry.url) || subscribedIds.has(entry.id);
                   return (
                     <div
                       key={entry.id}
                       className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.015] transition-[background-color] duration-100"
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex flex-wrap items-center gap-2.5">
                           <span className="text-[13.5px] font-medium text-slate-100">
                             {entry.name}
                           </span>
-                          <span className="text-[11px] font-mono text-slate-500 uppercase">
+                          <span className="text-[11px] font-mono text-slate-400 uppercase">
                             {entry.kind}
                           </span>
                         </div>
-                        <div className="text-[12px] text-slate-400 mt-0.5">
+                        <div className="text-[12px] text-slate-300 mt-0.5">
                           {entry.description}
                         </div>
-                        <div className="text-[11px] font-mono text-slate-500 mt-1 flex flex-wrap items-center gap-x-3">
+                        <div className="text-[11px] font-mono text-slate-400 mt-1 flex flex-wrap items-center gap-x-3">
                           <span>Maintainer: {entry.maintainer}</span>
                           {entry.submissionUrl && (
                             <a
                               href={entry.submissionUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-slate-400 hover:text-white inline-flex items-center gap-1"
+                              className="text-slate-300 hover:text-white inline-flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 rounded"
                             >
                               <GitBranch size={11} />
                               <span>Contribute via GitHub</span>
@@ -909,9 +1223,9 @@ export default function App() {
                         type="button"
                         disabled={alreadyAdded || busy === `registry:${entry.url}`}
                         onClick={() => handleSubscribeRegistry(entry)}
-                        className={`h-8 px-3 rounded-md border text-[12px] font-medium shrink-0 inline-flex items-center gap-1.5 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/45 ${
+                        className={`h-8 px-3 rounded-md border text-[12px] font-medium shrink-0 inline-flex items-center gap-1.5 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 ${
                           alreadyAdded
-                            ? 'border-white/[0.1] text-slate-400 bg-white/[0.03] cursor-default'
+                            ? 'border-white/[0.1] text-slate-300 bg-white/[0.03] cursor-default'
                             : 'border-white/[0.14] bg-[#161b25] hover:bg-[#202736] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] text-white cursor-pointer'
                         }`}
                       >
@@ -937,17 +1251,15 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: NEUTRAL TOPICS & COMMERCIAL/DISCLOSURE SIGNALS */}
         {tab === 'topics' && settings && (
           <div className="space-y-8">
-            {/* Topic Rule Matrix */}
             <section className="border border-white/[0.08] rounded-lg bg-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] overflow-hidden">
               <div className="p-5 border-b border-white/[0.07] flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-white">
                     Neutral Channel Topic Controls
                   </h2>
-                  <p className="text-[12.5px] text-slate-400 mt-0.5">
+                  <p className="text-[12.5px] text-slate-300 mt-0.5">
                     Topics come automatically from YouTube metadata as you browse, from your manual
                     channel tags, or from subscribed Topic Directories. Choose what passes through
                     your feed.
@@ -957,8 +1269,9 @@ export default function App() {
                 {activeTopicFiltersCount > 0 && (
                   <button
                     type="button"
+                    disabled={busy !== null}
                     onClick={handleResetAllTopics}
-                    className="h-8 px-3 rounded-md border border-white/[0.11] bg-[#161b25] hover:bg-[#1f2634] text-[12px] text-slate-200 transition active:scale-[0.97] cursor-pointer"
+                    className="h-8 px-3 rounded-md border border-white/[0.11] bg-[#161b25] hover:bg-[#1f2634] text-[12px] text-slate-200 transition active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-50 cursor-pointer"
                   >
                     Reset All to Pass
                   </button>
@@ -984,12 +1297,16 @@ export default function App() {
                         <div className="text-[13.5px] font-medium text-white">
                           {topic.label}
                         </div>
-                        <div className="text-[12px] text-slate-400 mt-0.5">
+                        <div className="text-[12px] text-slate-300 mt-0.5">
                           {topic.description}
                         </div>
                       </div>
 
-                      <div className="inline-flex items-center p-0.5 rounded-md border border-white/[0.08] bg-[#0a0c10] text-[12px] shrink-0">
+                      <div
+                        role="group"
+                        aria-label={`Filter action for ${topic.label}`}
+                        className="inline-flex items-center p-0.5 rounded-md border border-white/[0.08] bg-[#0a0c10] text-[12px] shrink-0"
+                      >
                         {TOPIC_RULE_OPTIONS.map((opt) => {
                           const active = currentAction === opt.value;
                           const activeColorClass =
@@ -1004,11 +1321,13 @@ export default function App() {
                             <button
                               key={opt.value}
                               type="button"
+                              aria-pressed={active}
+                              disabled={busy !== null}
                               onClick={() => void handleTopicRuleChange(topic.id, opt.value)}
-                              className={`h-7 px-2.5 rounded-[5px] transition-[background-color,color] duration-110 cursor-pointer ${
+                              className={`h-7 px-2.5 rounded-[5px] transition-[background-color,color] duration-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-50 cursor-pointer ${
                                 active
                                   ? `bg-[#1c2230] ${activeColorClass} font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]`
-                                  : 'text-slate-500 hover:text-slate-200'
+                                  : 'text-slate-400 hover:text-slate-100'
                               }`}
                             >
                               {opt.label}
@@ -1022,13 +1341,12 @@ export default function App() {
               </div>
             </section>
 
-            {/* Monetization & Paid Promotion Controls */}
             <section className="border border-white/[0.08] rounded-lg bg-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] p-5 space-y-5">
               <div>
                 <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-white">
                   Monetization & Commercial Signals (Neutral Observations)
                 </h2>
-                <p className="text-[12.5px] text-slate-400 mt-0.5">
+                <p className="text-[12.5px] text-slate-300 mt-0.5">
                   Because YouTube places ads even on non-partner channels, NoiseGate only reports
                   verifiable public YouTube Partner Program features (Memberships, Super Thanks,
                   Super Chat, Shopping) and official creator Paid Promotion disclosures.
@@ -1043,7 +1361,7 @@ export default function App() {
                       <div className="text-[13px] font-medium text-slate-100">
                         Show YPP Monetization Info on Watch & Channel pages
                       </div>
-                      <div className="text-[12px] text-slate-400 mt-0.5">
+                      <div className="text-[12px] text-slate-300 mt-0.5">
                         Displays observed Partner features factually beneath the video title and
                         in the channel popover.
                       </div>
@@ -1051,6 +1369,7 @@ export default function App() {
                   </div>
                   <TitaniumSwitch
                     checked={settings.showMonetizationIndicator}
+                    disabled={busy === 'settings'}
                     onChange={(checked) =>
                       handleSettingPatch({ showMonetizationIndicator: checked })
                     }
@@ -1065,13 +1384,14 @@ export default function App() {
                       <div className="text-[13px] font-medium text-slate-100">
                         Show Topic Category on Watch & Channel pages
                       </div>
-                      <div className="text-[12px] text-slate-400 mt-0.5">
+                      <div className="text-[12px] text-slate-300 mt-0.5">
                         Displays the detected or manually assigned topic category neutrally.
                       </div>
                     </div>
                   </div>
                   <TitaniumSwitch
                     checked={settings.showTopicIndicator}
+                    disabled={busy === 'settings'}
                     onChange={(checked) => handleSettingPatch({ showTopicIndicator: checked })}
                     label="Show topic category indicator"
                   />
@@ -1079,145 +1399,166 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-white/[0.07]">
-                <label className="flex flex-col gap-1.5 text-[12.5px]">
-                  <span className="text-slate-300 font-medium inline-flex items-center gap-1.5">
-                    <CurrencyCircleDollar size={14} className="text-slate-400" />
+                <div className="flex flex-col gap-1.5 text-[12.5px]">
+                  <span className="text-slate-200 font-medium inline-flex items-center gap-1.5">
+                    <CurrencyCircleDollar size={14} className="text-slate-300" />
                     <span>Feed Action when YPP Monetization signals are observed</span>
                   </span>
-                  <div className="relative">
-                    <select
-                      value={settings.monetizedAction}
-                      onChange={(e) =>
-                        handleSettingPatch({
-                          monetizedAction: e.target.value as TopicRuleAction,
-                        })
-                      }
-                      className={SELECT_CLASS}
-                    >
-                      {TOPIC_RULE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                          {opt.value === 'pass' ? ' (Neutral info only — Recommended)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <CaretDown
-                      size={13}
-                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
-                  </div>
-                </label>
+                  <TitaniumSelect
+                    value={settings.monetizedAction}
+                    options={MONETIZED_ACTION_OPTIONS}
+                    disabled={busy === 'settings'}
+                    onChange={(nextAction) =>
+                      handleSettingPatch({ monetizedAction: nextAction })
+                    }
+                    ariaLabel="Feed Action when YPP Monetization signals are observed"
+                  />
+                </div>
 
-                <label className="flex flex-col gap-1.5 text-[12.5px]">
-                  <span className="text-slate-300 font-medium inline-flex items-center gap-1.5">
-                    <Megaphone size={14} className="text-slate-400" />
+                <div className="flex flex-col gap-1.5 text-[12.5px]">
+                  <span className="text-slate-200 font-medium inline-flex items-center gap-1.5">
+                    <Megaphone size={14} className="text-slate-300" />
                     <span>Feed Action when Paid Promotion is disclosed</span>
                   </span>
-                  <div className="relative">
-                    <select
-                      value={settings.paidPromotionAction}
-                      onChange={(e) =>
-                        handleSettingPatch({
-                          paidPromotionAction: e.target.value as TopicRuleAction,
-                        })
-                      }
-                      className={SELECT_CLASS}
-                    >
-                      {TOPIC_RULE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <CaretDown
-                      size={13}
-                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
-                  </div>
-                </label>
+                  <TitaniumSelect
+                    value={settings.paidPromotionAction}
+                    options={TOPIC_RULE_OPTIONS}
+                    disabled={busy === 'settings'}
+                    onChange={(nextAction) =>
+                      handleSettingPatch({ paidPromotionAction: nextAction })
+                    }
+                    ariaLabel="Feed Action when Paid Promotion is disclosed"
+                  />
+                </div>
               </div>
             </section>
 
-            {/* Locally Observed Channel Profiles */}
             <section>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-400">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-300">
                   Locally Observed Channel Profiles ({snapshot?.channelProfiles.length ?? 0})
                 </h2>
-                {(snapshot?.channelProfiles.length ?? 0) > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearProfiles}
-                    disabled={busy === 'clear-profiles'}
-                    className="h-7 px-2.5 rounded-md border border-white/[0.1] text-slate-300 hover:text-red-400 hover:border-red-500/40 text-[12px] transition cursor-pointer"
-                  >
-                    Clear Profiles Cache
-                  </button>
-                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {(snapshot?.channelProfiles.length ?? 0) > 0 && (
+                    <>
+                      <div className="relative">
+                        <MagnifyingGlass
+                          size={14}
+                          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                        />
+                        <input
+                          type="text"
+                          value={profileSearch}
+                          onChange={(e) => setProfileSearch(e.target.value)}
+                          aria-label="Search observed channel profiles"
+                          placeholder="Filter profiles..."
+                          className="h-7 pl-8 pr-2.5 w-44 rounded-md border border-white/[0.09] bg-[#10131a] text-[12px] text-white placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
+                        />
+                      </div>
+
+                      {confirmKey === 'clear-profiles' ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={handleClearProfiles}
+                            disabled={busy === 'clear-profiles'}
+                            className="h-7 px-2.5 rounded-md border border-red-500/50 bg-red-950/60 text-red-200 text-[12px] font-medium cursor-pointer"
+                          >
+                            Confirm Clear
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmKey(null)}
+                            className="h-7 px-2 rounded-md border border-white/[0.1] bg-[#141821] text-slate-300 text-[12px] cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleClearProfiles}
+                          disabled={busy === 'clear-profiles'}
+                          className="h-7 px-2.5 rounded-md border border-white/[0.1] text-slate-300 hover:text-red-300 hover:border-red-500/40 text-[12px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 cursor-pointer"
+                        >
+                          Clear Profiles Cache
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
 
               <div className="border border-white/[0.08] rounded-lg divide-y divide-white/[0.06] bg-[#10131a] overflow-hidden">
-                {(snapshot?.channelProfiles ?? []).length === 0 ? (
-                  <div className="p-6 text-[13px] text-slate-400">
-                    No channel profiles cached yet. Open any YouTube video or channel page and
-                    NoiseGate will record its topic category and observable YPP features locally.
+                {filteredProfiles.length === 0 ? (
+                  <div className="p-6 text-[13px] text-slate-300">
+                    {(snapshot?.channelProfiles.length ?? 0) === 0
+                      ? 'No channel profiles cached yet. Open any YouTube video or channel page and NoiseGate will record its topic category and observable YPP features locally.'
+                      : 'No cached channel profiles match your search filter.'}
                   </div>
                 ) : (
-                  (snapshot?.channelProfiles ?? []).slice(0, 40).map((prof) => {
-                    const effectiveTopics = prof.manualTopics ?? prof.observedTopics;
-                    const rawCat = getTopObservedCategory(prof.observedYouTubeCategories);
-                    const topicStr =
-                      effectiveTopics.length > 0
-                        ? effectiveTopics.map((t) => TOPICS[t]?.label ?? t).join(', ')
-                        : rawCat ?? 'Unclassified';
+                  <>
+                    {filteredProfiles.slice(0, 40).map((prof) => {
+                      const effectiveTopics = prof.manualTopics ?? prof.observedTopics;
+                      const rawCat = getTopObservedCategory(prof.observedYouTubeCategories);
+                      const topicStr =
+                        effectiveTopics.length > 0
+                          ? effectiveTopics.map((t) => TOPICS[t]?.label ?? t).join(', ')
+                          : rawCat ?? 'Unclassified';
 
-                    return (
-                      <div
-                        key={prof.channelKey}
-                        className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[13.5px] font-medium text-white truncate">
-                              {prof.channelName || formatHandle(prof.handle) || prof.channelKey}
-                            </span>
-                            <span className="text-[11px] font-mono text-slate-500 truncate">
-                              {[formatHandle(prof.handle), prof.channelId]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </span>
+                      return (
+                        <div
+                          key={prof.channelKey}
+                          className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[13.5px] font-medium text-white truncate">
+                                {prof.channelName || formatHandle(prof.handle) || prof.channelKey}
+                              </span>
+                              <span className="text-[11px] font-mono text-slate-400 truncate">
+                                {[formatHandle(prof.handle), prof.channelId]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </span>
+                            </div>
+                            <div className="text-[12px] text-slate-300 mt-0.5 flex flex-wrap items-center gap-x-2">
+                              <span className="text-slate-100">{topicStr}</span>
+                              <span className="opacity-40">·</span>
+                              <span>
+                                {formatMonetizationSummary(
+                                  prof.yppSignals,
+                                  prof.monetizationInspected,
+                                )}
+                              </span>
+                            </div>
                           </div>
-                          <div className="text-[12px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-x-2">
-                            <span className="text-slate-200">{topicStr}</span>
-                            <span className="opacity-35">·</span>
-                            <span>
-                              {formatMonetizationSummary(
-                                prof.yppSignals,
-                                prof.monetizationInspected,
-                              )}
-                            </span>
+                          <div className="text-[11px] text-slate-400 tabular shrink-0">
+                            {formatRelativeTime(prof.lastObservedAt)}
                           </div>
                         </div>
-                        <div className="text-[11px] text-slate-500 tabular shrink-0">
-                          {formatRelativeTime(prof.lastObservedAt)}
-                        </div>
+                      );
+                    })}
+                    {filteredProfiles.length > 40 && (
+                      <div className="px-4 py-2 text-[11.5px] text-slate-400 bg-[#0d1016]">
+                        Showing most recent 40 of {filteredProfiles.length} matching profiles. Use the filter box above to narrow results.
                       </div>
-                    );
-                  })
+                    )}
+                  </>
                 )}
               </div>
             </section>
           </div>
         )}
 
-        {/* TAB 3: LOCAL RULES */}
         {tab === 'rules' && (
           <div className="space-y-6">
             <section className="border border-white/[0.08] rounded-lg bg-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] p-5">
               <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-white">
                 Add Local Channel Rule
               </h2>
-              <p className="text-[12px] text-slate-400 mt-0.5">
+              <p className="text-[12px] text-slate-300 mt-0.5">
                 Local rules always take precedence over subscribed lists, topic rules, and signals
                 (including Trust overrides).
               </p>
@@ -1231,54 +1572,39 @@ export default function App() {
                   required
                   value={newRuleTarget}
                   onChange={(e) => setNewRuleTarget(e.target.value)}
+                  aria-label="YouTube handle, UC channel ID, or channel URL"
                   placeholder="@handle, UC... ID, or channel URL"
-                  className="md:col-span-4 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-500 transition-[border-color] duration-120 focus:outline-none focus:border-white/50"
+                  className="md:col-span-4 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-400 transition-[border-color] duration-120 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
                 />
-                <div className="relative md:col-span-2">
-                  <select
+                <div className="md:col-span-2">
+                  <TitaniumSelect
                     value={newRuleAction}
-                    onChange={(e) => setNewRuleAction(e.target.value as LocalRuleAction)}
-                    className={SELECT_CLASS}
-                  >
-                    <option value="label">Label</option>
-                    <option value="dim">Dim</option>
-                    <option value="hide">Hide</option>
-                    <option value="allow">Trust (Override)</option>
-                  </select>
-                  <CaretDown
-                    size={13}
-                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                    options={LOCAL_RULE_ACTION_OPTIONS}
+                    onChange={setNewRuleAction}
+                    ariaLabel="Local rule action"
                   />
                 </div>
-                <div className="relative md:col-span-2">
-                  <select
-                    value={newRuleCategory}
-                    onChange={(e) => setNewRuleCategory(e.target.value as CategoryId)}
+                <div className="md:col-span-2">
+                  <TitaniumSelect
+                    value={newRuleAction === 'allow' ? 'verified-independent' : newRuleCategory}
+                    options={CATEGORY_OPTIONS}
+                    onChange={setNewRuleCategory}
                     disabled={newRuleAction === 'allow'}
-                    className={SELECT_CLASS}
-                  >
-                    {SELECTABLE_CATEGORIES.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.shortLabel}
-                      </option>
-                    ))}
-                  </select>
-                  <CaretDown
-                    size={13}
-                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                    ariaLabel="Local rule category"
                   />
                 </div>
                 <input
                   type="text"
                   value={newRuleNote}
                   onChange={(e) => setNewRuleNote(e.target.value)}
+                  aria-label="Optional local note"
                   placeholder="Optional note..."
-                  className="md:col-span-2 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-500 transition-[border-color] duration-120 focus:outline-none focus:border-white/50"
+                  className="md:col-span-2 h-9 px-3 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[13px] text-white placeholder:text-slate-400 transition-[border-color] duration-120 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
                 />
                 <button
                   type="submit"
                   disabled={busy === 'add-rule'}
-                  className="md:col-span-2 h-9 px-3 rounded-md bg-[#f8fafc] hover:bg-slate-200 text-[#0a0c10] font-semibold text-[13px] inline-flex items-center justify-center gap-1.5 transition-[background-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/70 cursor-pointer"
+                  className="md:col-span-2 h-9 px-3 rounded-md bg-[#f8fafc] hover:bg-slate-200 text-[#0a0c10] font-semibold text-[13px] inline-flex items-center justify-center gap-1.5 transition-[background-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:opacity-50 cursor-pointer"
                 >
                   <Plus size={14} weight="bold" />
                   <span>Save Rule</span>
@@ -1286,40 +1612,45 @@ export default function App() {
               </form>
             </section>
 
-            {/* Filter & Segmented Control */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="relative flex-1 max-w-sm">
                 <MagnifyingGlass
                   size={15}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 />
                 <input
                   type="text"
                   value={ruleSearch}
                   onChange={(e) => setRuleSearch(e.target.value)}
+                  aria-label="Search local channel rules"
                   placeholder="Search channels, handles, or notes..."
-                  className="w-full h-8 pl-9 pr-3 rounded-md border border-white/[0.09] bg-[#10131a] text-[12.5px] text-white placeholder:text-slate-500 transition-[border-color] duration-120 focus:outline-none focus:border-white/50"
+                  className="w-full h-8 pl-9 pr-3 rounded-md border border-white/[0.09] bg-[#10131a] text-[12.5px] text-white placeholder:text-slate-400 transition-[border-color] duration-120 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
                 />
               </div>
 
-              <div className="inline-flex items-center p-0.5 rounded-md border border-white/[0.08] bg-[#0d1016] text-[12px]">
+              <div
+                role="group"
+                aria-label="Filter rules by action"
+                className="inline-flex flex-wrap items-center p-0.5 rounded-md border border-white/[0.08] bg-[#0d1016] text-[12px]"
+              >
                 {(['all', 'label', 'dim', 'hide', 'allow'] as const).map((key) => {
                   const active = ruleFilter === key;
                   return (
                     <button
                       key={key}
                       type="button"
+                      aria-pressed={active}
                       onClick={() => setRuleFilter(key)}
-                      className={`h-7 px-2.5 rounded-[5px] transition-[background-color,color] duration-120 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/45 cursor-pointer ${
+                      className={`h-7 px-2.5 rounded-[5px] transition-[background-color,color] duration-120 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 cursor-pointer ${
                         active
                           ? 'bg-[#1c2230] text-white font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]'
-                          : 'text-slate-400 hover:text-slate-200'
+                          : 'text-slate-400 hover:text-slate-100'
                       }`}
                     >
                       {key === 'all'
                         ? 'All'
                         : key === 'allow'
-                          ? 'Trusted'
+                          ? 'Trust'
                           : key.charAt(0).toUpperCase() + key.slice(1)}
                     </button>
                   );
@@ -1329,7 +1660,7 @@ export default function App() {
 
             <div className="border border-white/[0.08] rounded-lg divide-y divide-white/[0.06] bg-[#10131a] overflow-hidden">
               {filteredRules.length === 0 ? (
-                <div className="p-6 text-[13px] text-slate-400">
+                <div className="p-6 text-[13px] text-slate-300">
                   No local rules match your current filter. Use the hover trigger on any YouTube
                   card or add a channel above.
                 </div>
@@ -1345,22 +1676,22 @@ export default function App() {
                       style={{ borderLeft: `2px solid ${accent}` }}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[13.5px] font-medium text-white truncate">
                             {rule.channelName || formatHandle(rule.handle) || rule.id}
                           </span>
-                          <span className="text-[11px] font-mono text-slate-500 truncate">
+                          <span className="text-[11px] font-mono text-slate-400 truncate">
                             {[formatHandle(rule.handle), rule.channelId].filter(Boolean).join(' · ')}
                           </span>
                         </div>
-                        <div className="text-[12px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-x-2">
-                          <span className="text-slate-300">
-                            {rule.action === 'allow' ? 'Trusted Override' : meta.label}
+                        <div className="text-[12px] text-slate-300 mt-0.5 flex flex-wrap items-center gap-x-2">
+                          <span className="text-slate-200">
+                            {rule.action === 'allow' ? 'Trust (Local Override)' : meta.label}
                           </span>
                           {rule.note && (
                             <>
                               <span className="opacity-40">·</span>
-                              <span>{rule.note}</span>
+                              <span className="break-words min-w-0">{rule.note}</span>
                             </>
                           )}
                         </div>
@@ -1381,16 +1712,20 @@ export default function App() {
                           ] as const
                         ).map(({ act, label, Icon, cls }) => {
                           const active = rule.action === act;
+                          const channelLabel = rule.channelName || rule.id;
                           return (
                             <button
                               key={act}
                               type="button"
                               title={label}
+                              aria-label={`${label} ${channelLabel}`}
+                              aria-pressed={active}
+                              disabled={busy !== null}
                               onClick={() => handleUpdateRuleAction(rule, act)}
-                              className={`h-7 px-2 rounded border text-[11.5px] inline-flex items-center gap-1 transition-[background-color,border-color,color,transform] duration-110 active:scale-[0.95] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/45 cursor-pointer ${
+                              className={`h-7 px-2 rounded border text-[11.5px] inline-flex items-center gap-1 transition-[background-color,border-color,color,transform] duration-110 active:scale-[0.95] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-50 cursor-pointer ${
                                 active
                                   ? `border-white/20 bg-white/[0.09] ${cls} font-medium`
-                                  : 'border-white/[0.06] bg-transparent text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                                  : 'border-white/[0.06] bg-transparent text-slate-300 hover:text-white hover:bg-white/[0.04]'
                               }`}
                             >
                               <Icon size={13} weight={active ? 'fill' : 'regular'} />
@@ -1403,8 +1738,9 @@ export default function App() {
                           type="button"
                           title="Delete rule"
                           aria-label={`Delete rule for ${rule.channelName || rule.id}`}
+                          disabled={busy !== null}
                           onClick={() => handleDeleteRule(rule.id)}
-                          className="w-7 h-7 rounded border border-white/[0.07] text-slate-400 hover:text-red-400 hover:border-red-500/40 flex items-center justify-center transition-[border-color,color,transform] duration-110 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400/50 cursor-pointer ml-1"
+                          className="w-7 h-7 rounded border border-white/[0.07] text-slate-300 hover:text-red-300 hover:border-red-500/40 flex items-center justify-center transition-[border-color,color,transform] duration-110 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 disabled:opacity-50 cursor-pointer ml-1"
                         >
                           <Trash size={13} />
                         </button>
@@ -1417,7 +1753,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: OFFICIAL YOUTUBE DISCLOSURES (LAYER 1) */}
         {tab === 'disclosures' && settings && (
           <div className="space-y-6">
             <section className="border border-white/[0.08] rounded-lg bg-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] p-5 space-y-4">
@@ -1425,51 +1760,40 @@ export default function App() {
                 <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-white">
                   Layer 1: Official YouTube Synthetic Disclosures
                 </h2>
-                <p className="text-[12.5px] text-slate-400 mt-1">
+                <p className="text-[12.5px] text-slate-300 mt-1">
                   When you open a YouTube video carrying the official{' '}
-                  <em className="text-slate-200">"Altered or synthetic content"</em> disclosure,
+                  <em className="text-slate-100">"Altered or synthetic content"</em> disclosure,
                   NoiseGate flags it immediately and caches the video and channel locally so you
                   recognize it across feeds with zero extra network calls.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-3 border-t border-white/[0.07]">
-                <label className="flex flex-col gap-1.5 text-[12.5px]">
-                  <span className="text-slate-300 font-medium">Action on disclosed content</span>
-                  <div className="relative">
-                    <select
-                      value={settings.disclosureAction}
-                      onChange={(e) =>
-                        handleSettingPatch({
-                          disclosureAction: e.target.value as FilterAction,
-                        })
-                      }
-                      className={SELECT_CLASS}
-                    >
-                      {ACTION_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <CaretDown
-                      size={13}
-                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
-                  </div>
-                </label>
+                <div className="flex flex-col gap-1.5 text-[12.5px]">
+                  <span className="text-slate-200 font-medium">Action on disclosed content</span>
+                  <TitaniumSelect
+                    value={settings.disclosureAction}
+                    options={ACTION_OPTIONS}
+                    disabled={busy === 'settings'}
+                    onChange={(nextAction) =>
+                      handleSettingPatch({ disclosureAction: nextAction })
+                    }
+                    ariaLabel="Action on disclosed content"
+                  />
+                </div>
 
                 <div className="flex items-start justify-between gap-4 pt-2 sm:pt-5">
                   <div>
-                    <span className="text-[12.5px] text-slate-200 font-medium block">
+                    <span className="text-[12.5px] text-slate-100 font-medium block">
                       Show channel disclosure indicator in feeds
                     </span>
-                    <span className="text-slate-400 text-[11.5px]">
+                    <span className="text-slate-300 text-[11.5px]">
                       Annotate other videos from a channel after observing a disclosed video.
                     </span>
                   </div>
                   <TitaniumSwitch
                     checked={settings.propagateChannelDisclosure}
+                    disabled={busy === 'settings'}
                     onChange={(checked) =>
                       handleSettingPatch({ propagateChannelDisclosure: checked })
                     }
@@ -1480,25 +1804,48 @@ export default function App() {
             </section>
 
             <section>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-400">
-                  Locally Observed Disclosures ({snapshot?.totalVideoDisclosures ?? 0} videos)
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-slate-300">
+                  {(() => {
+                    const total = snapshot?.totalVideoDisclosures ?? 0;
+                    return `Locally Observed Disclosures (${total} ${total === 1 ? 'video' : 'videos'})`;
+                  })()}
                 </h2>
                 {(snapshot?.totalVideoDisclosures ?? 0) > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearDisclosures}
-                    disabled={busy === 'clear-disclosures'}
-                    className="h-7 px-2.5 rounded-md border border-red-500/30 text-red-400 hover:bg-red-950/30 text-[12px] transition-[background-color,transform] duration-120 active:scale-[0.97] cursor-pointer"
-                  >
-                    Clear Cache
-                  </button>
+                  confirmKey === 'clear-disclosures' ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={handleClearDisclosures}
+                        disabled={busy === 'clear-disclosures'}
+                        className="h-7 px-2.5 rounded-md border border-red-500/50 bg-red-950/60 text-red-200 text-[12px] font-medium cursor-pointer"
+                      >
+                        Confirm Clear
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmKey(null)}
+                        className="h-7 px-2 rounded-md border border-white/[0.1] bg-[#141821] text-slate-300 text-[12px] cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleClearDisclosures}
+                      disabled={busy === 'clear-disclosures'}
+                      className="h-7 px-2.5 rounded-md border border-red-500/30 text-red-300 hover:bg-red-950/30 text-[12px] transition-[background-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 cursor-pointer"
+                    >
+                      Clear Cache
+                    </button>
+                  )
                 )}
               </div>
 
               <div className="border border-white/[0.08] rounded-lg divide-y divide-white/[0.06] bg-[#10131a] overflow-hidden">
                 {(snapshot?.channelDisclosures ?? []).length === 0 ? (
-                  <div className="p-6 text-[13px] text-slate-400">
+                  <div className="p-6 text-[13px] text-slate-300">
                     No official YouTube synthetic disclosures observed yet. Watch any video carrying
                     YouTube's "Altered or synthetic content" label and it will appear here
                     automatically.
@@ -1507,23 +1854,23 @@ export default function App() {
                   (snapshot?.channelDisclosures ?? []).map((ch) => (
                     <div
                       key={ch.channelKey}
-                      className="p-3.5 flex items-center justify-between gap-4"
+                      className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4"
                       style={{ borderLeft: '2px solid #38bdf8' }}
                     >
                       <div className="min-w-0">
                         <div className="text-[13.5px] font-medium text-white truncate">
                           {ch.channelName || formatHandle(ch.handle) || ch.channelKey}
                         </div>
-                        <div className="text-[11.5px] font-mono text-slate-500 mt-0.5">
+                        <div className="text-[11.5px] font-mono text-slate-400 mt-0.5 truncate">
                           {[formatHandle(ch.handle), ch.channelId].filter(Boolean).join(' · ')}
                         </div>
                       </div>
-                      <div className="text-right text-[12px] text-slate-400 tabular shrink-0">
+                      <div className="sm:text-right text-[12px] text-slate-300 tabular shrink-0">
                         <div className="text-sky-400 font-medium">
                           {ch.videoIds.length} disclosed video
                           {ch.videoIds.length === 1 ? '' : 's'}
                         </div>
-                        <div className="text-[11px] text-slate-500">
+                        <div className="text-[11px] text-slate-400">
                           Last seen {formatRelativeTime(ch.lastDetectedAt)}
                         </div>
                       </div>
@@ -1535,7 +1882,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: SETTINGS & BACKUP */}
         {tab === 'settings' && settings && (
           <div className="space-y-6">
             <section className="border border-white/[0.08] rounded-lg bg-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] p-5 space-y-4">
@@ -1544,80 +1890,73 @@ export default function App() {
               </h2>
 
               <div className="space-y-4 pt-3 border-t border-white/[0.07]">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
                     <div className="text-[13px] text-slate-100 font-medium">
                       Show 1-click NoiseGate button on YouTube card hover
                     </div>
-                    <div className="text-slate-400 text-[12px] mt-0.5">
+                    <div className="text-slate-300 text-[12px] mt-0.5">
                       Displays a subtle corner trigger when hovering over video cards to inspect or
                       label a channel in one click.
                     </div>
                   </div>
                   <TitaniumSwitch
                     checked={settings.showCardHoverButton}
+                    disabled={busy === 'settings'}
                     onChange={(checked) => handleSettingPatch({ showCardHoverButton: checked })}
                     label="Show card hover button on YouTube"
                   />
                 </div>
 
-                <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/[0.06]">
-                  <div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-white/[0.06]">
+                  <div className="min-w-0">
                     <div className="text-[13px] font-medium text-slate-100">
                       Background list auto-refresh interval
                     </div>
-                    <div className="text-[12px] text-slate-400 mt-0.5">
+                    <div className="text-[12px] text-slate-300 mt-0.5">
                       Periodic check for external subscribed filter lists via browser alarms (uses
                       ETag conditional requests).
                     </div>
                   </div>
-                  <div className="relative w-40 shrink-0">
-                    <select
-                      value={settings.autoRefreshHours}
-                      onChange={(e) =>
-                        handleSettingPatch({ autoRefreshHours: Number(e.target.value) })
+                  <div className="w-full sm:w-44 shrink-0">
+                    <TitaniumSelect
+                      value={String(settings.autoRefreshHours)}
+                      options={AUTO_REFRESH_OPTIONS}
+                      disabled={busy === 'settings'}
+                      ariaLabel="Background list auto-refresh interval"
+                      size="sm"
+                      align="right"
+                      onChange={(val) =>
+                        handleSettingPatch({ autoRefreshHours: Number(val) })
                       }
-                      className={SELECT_SM_CLASS + ' w-full'}
-                    >
-                      <option value={6}>Every 6 hours</option>
-                      <option value={12}>Every 12 hours</option>
-                      <option value={24}>Every 24 hours</option>
-                      <option value={72}>Every 3 days</option>
-                      <option value={168}>Weekly</option>
-                    </select>
-                    <CaretDown
-                      size={12}
-                      className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400"
                     />
                   </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-white/[0.06]">
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-[13px] font-medium text-slate-100">
                       Community GitHub repository for metadata suggestions
                     </div>
-                    <div className="text-[12px] text-slate-400 mt-0.5">
-                      Default <code className="font-mono text-slate-300">owner/repo</code> opened by
+                    <div className="text-[12px] text-slate-300 mt-0.5">
+                      Default <code className="font-mono text-slate-200">owner/repo</code> opened by
                       "Suggest metadata on GitHub" in the channel popover.
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
                     <input
                       type="text"
                       value={repoInput}
                       onChange={(e) => setRepoInput(e.target.value)}
+                      aria-label="Community GitHub repository owner/repo slug"
                       placeholder="zyniotech/noisegate-lists"
-                      className="h-8 w-52 px-2.5 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[12px] font-mono text-white focus:outline-none focus:border-white/50"
+                      className="h-8 flex-1 sm:flex-none sm:w-56 px-2.5 rounded-md border border-white/[0.1] bg-[#0a0c10] text-[12px] font-mono text-white placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
                     />
                     <button
                       type="button"
-                      onClick={() => {
-                        const cleaned = repoInput.trim() || 'zyniotech/noisegate-lists';
-                        void handleSettingPatch({ communitySubmissionRepo: cleaned });
-                        showNotice('ok', `Saved community repo: ${cleaned}`);
-                      }}
-                      className="h-8 px-3 rounded-md border border-white/[0.12] bg-[#161b25] hover:bg-[#202736] text-[12px] text-white cursor-pointer"
+                      disabled={busy === 'settings'}
+                      onClick={() => void handleSaveRepoSlug()}
+                      className="h-8 px-3 rounded-md border border-white/[0.12] bg-[#161b25] hover:bg-[#202736] text-[12px] text-white shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-50 cursor-pointer"
                     >
                       Save
                     </button>
@@ -1631,7 +1970,7 @@ export default function App() {
                 <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-white">
                   Local Export & Import (JSON)
                 </h2>
-                <p className="text-[12.5px] text-slate-400 mt-0.5">
+                <p className="text-[12.5px] text-slate-300 mt-0.5">
                   All rules live locally in your browser. Export your configuration anytime or
                   import a NoiseGate backup or Filter List JSON v1/v2 file.
                 </p>
@@ -1642,28 +1981,21 @@ export default function App() {
                   type="button"
                   onClick={handleExport}
                   disabled={busy === 'export'}
-                  className="h-9 px-4 rounded-md border border-white/[0.14] bg-[#161b25] hover:bg-[#202736] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] text-[13px] text-white font-medium inline-flex items-center gap-2 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/45 cursor-pointer"
+                  className="h-9 px-4 rounded-md border border-white/[0.14] bg-[#161b25] hover:bg-[#202736] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] text-[13px] text-white font-medium inline-flex items-center gap-2 transition-[background-color,border-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-50 cursor-pointer"
                 >
                   <DownloadSimple size={15} />
                   <span>Export JSON Backup</span>
                 </button>
 
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <select
-                      value={importMode}
-                      onChange={(e) => setImportMode(e.target.value as 'merge' | 'replace')}
-                      aria-label="Import mode"
-                      className={SELECT_CLASS + ' w-auto'}
-                    >
-                      <option value="merge">Import Mode: Merge</option>
-                      <option value="replace">Import Mode: Replace</option>
-                    </select>
-                    <CaretDown
-                      size={13}
-                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
-                  </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <TitaniumSelect
+                    value={importMode}
+                    options={IMPORT_MODE_OPTIONS}
+                    onChange={setImportMode}
+                    ariaLabel="Import mode"
+                    fullWidth={false}
+                    triggerPrefix="Import Mode: "
+                  />
 
                   <input
                     ref={fileInputRef}
@@ -1677,12 +2009,52 @@ export default function App() {
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={busy === 'import'}
-                    className="h-9 px-4 rounded-md bg-[#f8fafc] hover:bg-slate-200 text-[#0a0c10] text-[13px] font-semibold inline-flex items-center gap-2 transition-[background-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/70 cursor-pointer"
+                    className="h-9 px-4 rounded-md bg-[#f8fafc] hover:bg-slate-200 text-[#0a0c10] text-[13px] font-semibold inline-flex items-center gap-2 transition-[background-color,transform] duration-120 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:opacity-50 cursor-pointer"
                   >
                     <UploadSimple size={15} weight="bold" />
                     <span>{busy === 'import' ? 'Importing...' : 'Import JSON'}</span>
                   </button>
                 </div>
+              </div>
+
+              <div className="pt-4 border-t border-white/[0.07] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-medium text-slate-100">
+                    Reset All Local Extension Data
+                  </div>
+                  <div className="text-[12px] text-slate-300 mt-0.5">
+                    Clears all local rules, observed profiles, disclosure caches, subscribed external
+                    lists, and restores defaults.
+                  </div>
+                </div>
+                {confirmKey === 'reset-all' ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void handleResetAllData()}
+                      disabled={busy === 'reset-all'}
+                      className="h-8 px-3 rounded-md border border-red-500/50 bg-red-950/60 hover:bg-red-900/60 text-red-200 text-[12px] font-medium cursor-pointer"
+                    >
+                      {busy === 'reset-all' ? 'Resetting...' : 'Confirm Full Reset'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmKey(null)}
+                      className="h-8 px-2.5 rounded-md border border-white/[0.1] bg-[#141821] text-slate-300 text-[12px] cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleResetAllData()}
+                    disabled={busy !== null}
+                    className="h-8 px-3 rounded-md border border-red-500/35 text-red-300 hover:bg-red-950/35 text-[12px] font-medium shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 disabled:opacity-50 cursor-pointer"
+                  >
+                    Reset Everything
+                  </button>
+                )}
               </div>
             </section>
           </div>

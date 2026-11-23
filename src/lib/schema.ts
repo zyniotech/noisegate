@@ -1,11 +1,16 @@
-import { normalizeChannelId, normalizeHandle, sanitizeHttpUrl } from './normalize';
-import { normalizeTopicId } from './taxonomy';
+import {
+  isSafeLookupKey,
+  normalizeChannelId,
+  normalizeHandle,
+  sanitizeHttpUrl,
+} from './normalize';
+import { normalizeObservableSignal, normalizeTopicId } from './taxonomy';
 import type {
-  FilterAction,
   ParsedFilterList,
   ParsedListEntry,
   RegistryListEntry,
   TopicId,
+  TopicRuleAction,
 } from './types';
 
 export interface ParseResult {
@@ -33,7 +38,10 @@ function slugifyId(input: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
-  return slug || `list-${Date.now()}`;
+  if (!slug || !isSafeLookupKey(slug)) {
+    return `list-${Date.now()}`;
+  }
+  return slug;
 }
 
 function parseTopicList(raw: unknown): TopicId[] {
@@ -57,7 +65,7 @@ function parseSignalList(raw: unknown): string[] {
   const seen = new Set<string>();
   for (const item of raw) {
     if (typeof item !== 'string') continue;
-    const s = item.trim().toLowerCase().slice(0, 64);
+    const s = normalizeObservableSignal(item);
     if (s && !seen.has(s)) {
       seen.add(s);
       out.push(s);
@@ -66,9 +74,6 @@ function parseSignalList(raw: unknown): string[] {
   return out;
 }
 
-/**
- * Validates and parses a NoiseGate JSON v1 or v2 filter list.
- */
 export function parseJsonFilterList(rawJson: unknown): FilterListParseOutcome {
   if (!isRecord(rawJson)) {
     return { ok: false, error: 'Filter list JSON must be an object.' };
@@ -82,7 +87,8 @@ export function parseJsonFilterList(rawJson: unknown): FilterListParseOutcome {
     };
   }
 
-  const listId = typeof rawJson.listId === 'string' ? rawJson.listId.trim() : '';
+  const rawListId = typeof rawJson.listId === 'string' ? rawJson.listId.trim() : '';
+  const listId = isSafeLookupKey(rawListId) ? rawListId : slugifyId(rawListId);
   const name = typeof rawJson.name === 'string' ? rawJson.name.trim() : '';
   const updatedAt = typeof rawJson.updatedAt === 'string' ? rawJson.updatedAt.trim() : '';
 
@@ -92,8 +98,8 @@ export function parseJsonFilterList(rawJson: unknown): FilterListParseOutcome {
   if (!name) {
     return { ok: false, error: 'Missing required field "name".' };
   }
-  if (!updatedAt) {
-    return { ok: false, error: 'Missing required field "updatedAt".' };
+  if (!updatedAt || Number.isNaN(Date.parse(updatedAt))) {
+    return { ok: false, error: 'Missing or invalid ISO date in "updatedAt".' };
   }
 
   const hasChannels = rawJson.channels !== undefined;
@@ -128,7 +134,7 @@ export function parseJsonFilterList(rawJson: unknown): FilterListParseOutcome {
         break;
       }
 
-      if (!isRecord(rawEntry)) {
+      if (!isSafeLookupKey(rawKey) || !isRecord(rawEntry)) {
         warnings.push(`Skipped malformed entry for "${rawKey}".`);
         continue;
       }
@@ -137,24 +143,24 @@ export function parseJsonFilterList(rawJson: unknown): FilterListParseOutcome {
       const signals = parseSignalList(rawEntry.signals);
 
       let fallbackCategory = 'custom';
-      if (signals.some((s) => s.includes('synthetic'))) {
-        fallbackCategory = 'ai-synthetic';
-      } else if (signals.some((s) => s.includes('farm'))) {
-        fallbackCategory = 'content-farm';
-      } else if (signals.some((s) => s.includes('reupload'))) {
-        fallbackCategory = 'reupload-compilation';
-      } else if (topics.length > 0) {
+      if (topics.length > 0) {
         fallbackCategory = 'topic-match';
+      } else if (signals.includes('yt-synthetic-disclosure')) {
+        fallbackCategory = 'disclosure-detected';
+      } else if (signals.includes('yt-paid-promotion')) {
+        fallbackCategory = 'paid-promotion';
       } else if (signals.some((s) => s.startsWith('ypp-'))) {
         fallbackCategory = 'ypp-monetized';
       } else if (version === 1) {
         fallbackCategory = 'ai-synthetic';
       }
 
-      const category =
+      const rawCat =
         typeof rawEntry.category === 'string' && rawEntry.category.trim()
           ? rawEntry.category.trim().slice(0, 64)
-          : fallbackCategory;
+          : '';
+      const category =
+        rawCat && isSafeLookupKey(rawCat) ? rawCat : fallbackCategory;
 
       const note =
         typeof rawEntry.note === 'string' && rawEntry.note.trim()
@@ -240,13 +246,17 @@ export function parseJsonFilterList(rawJson: unknown): FilterListParseOutcome {
   };
 }
 
-/**
- * Parses uBlock / AiSList-style plain-text filter lists.
- */
 export function parsePlainTextFilterList(
   rawText: string,
   sourceUrl?: string,
 ): FilterListParseOutcome {
+  if (/^\s*</.test(rawText) || /@(media|import|keyframes|layer|charset)\b/i.test(rawText)) {
+    return {
+      ok: false,
+      error: 'Response looks like HTML or CSS rather than a filter list.',
+    };
+  }
+
   const lines = rawText.split(/\r?\n/);
   let title = '';
   let description = '';
@@ -295,6 +305,10 @@ export function parsePlainTextFilterList(
     if (entries.length >= MAX_LIST_ENTRIES) {
       warnings.push(`Entry cap (${MAX_LIST_ENTRIES}) reached; remaining lines skipped.`);
       break;
+    }
+
+    if (line.includes('<') || line.includes('>') || line.includes('{') || line.includes('}')) {
+      continue;
     }
 
     const token = line.split(/\s+/)[0] ?? '';
@@ -356,6 +370,11 @@ export function parsePlainTextFilterList(
     }
   }
 
+  const parsedDate =
+    lastModified && !Number.isNaN(Date.parse(lastModified))
+      ? new Date(lastModified).toISOString()
+      : new Date().toISOString();
+
   return {
     ok: true,
     warnings,
@@ -366,15 +385,12 @@ export function parsePlainTextFilterList(
       description: description || undefined,
       homepage: sanitizeHttpUrl(homepage),
       license: license || undefined,
-      updatedAt: lastModified || new Date().toISOString(),
+      updatedAt: parsedDate,
       entries,
     },
   };
 }
 
-/**
- * Auto-detects JSON v1/v2 vs. plain-text (AiSList) filter list content.
- */
 export function parseFilterListContent(
   rawText: string,
   sourceUrl?: string,
@@ -384,7 +400,7 @@ export function parseFilterListContent(
     return { ok: false, error: 'Filter list response is empty.' };
   }
 
-  if (trimmed.startsWith('{')) {
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       const parsed: unknown = JSON.parse(trimmed);
       return parseJsonFilterList(parsed);
@@ -399,9 +415,6 @@ export function parseFilterListContent(
   return parsePlainTextFilterList(trimmed, sourceUrl);
 }
 
-/**
- * Validates an open NoiseGate Registry JSON manifest.
- */
 export function parseRegistryJson(rawJson: unknown): RegistryListEntry[] {
   if (!isRecord(rawJson) || !Array.isArray(rawJson.lists)) {
     return [];
@@ -410,18 +423,24 @@ export function parseRegistryJson(rawJson: unknown): RegistryListEntry[] {
   const result: RegistryListEntry[] = [];
   for (const item of rawJson.lists) {
     if (!isRecord(item)) continue;
-    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    const rawId = typeof item.id === 'string' ? item.id.trim() : '';
+    const id = rawId && isSafeLookupKey(rawId) ? rawId : '';
     const name = typeof item.name === 'string' ? item.name.trim() : '';
     const url = typeof item.url === 'string' ? sanitizeHttpUrl(item.url) : undefined;
     if (!id || !name || !url) continue;
 
-    const action: FilterAction =
-      item.defaultAction === 'hide' || item.defaultAction === 'dim'
-        ? item.defaultAction
-        : 'label';
-
     const kind: RegistryListEntry['kind'] =
       item.kind === 'topics' || item.kind === 'signals' ? item.kind : 'community';
+
+    const action: TopicRuleAction =
+      item.defaultAction === 'hide' ||
+      item.defaultAction === 'dim' ||
+      item.defaultAction === 'label' ||
+      item.defaultAction === 'pass'
+        ? item.defaultAction
+        : kind === 'topics'
+          ? 'pass'
+          : 'label';
 
     result.push({
       id,

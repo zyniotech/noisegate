@@ -1,5 +1,15 @@
-import { sanitizeHttpUrl } from './normalize';
-import type { ChannelRef, TopicId, YppSignalId } from './types';
+import {
+  extractVideoId,
+  normalizeChannelId,
+  normalizeHandle,
+  sanitizeHttpUrl,
+} from './normalize';
+import type {
+  ChannelRef,
+  ObservableSignalId,
+  TopicId,
+  YppSignalId,
+} from './types';
 
 export interface TopicMeta {
   id: TopicId;
@@ -147,7 +157,7 @@ export function mapYouTubeCategoryToTopic(rawCategory?: string | null): TopicId 
   if (!rawCategory) return undefined;
   const cleaned = rawCategory.trim().toLowerCase();
   if (!cleaned) return undefined;
-  if (YOUTUBE_CATEGORY_TO_TOPIC[cleaned]) {
+  if (Object.hasOwn(YOUTUBE_CATEGORY_TO_TOPIC, cleaned)) {
     return YOUTUBE_CATEGORY_TO_TOPIC[cleaned];
   }
   return normalizeTopicId(cleaned);
@@ -161,11 +171,22 @@ export const YPP_SIGNAL_LABELS: Record<YppSignalId, string> = {
 };
 
 const VALID_YPP_SIGNALS = new Set<string>(Object.keys(YPP_SIGNAL_LABELS));
+const VALID_OBSERVABLE_SIGNALS = new Set<string>([
+  ...VALID_YPP_SIGNALS,
+  'yt-paid-promotion',
+  'yt-synthetic-disclosure',
+]);
 
 export function normalizeYppSignal(raw?: string | null): YppSignalId | undefined {
   if (!raw) return undefined;
   const key = raw.trim().toLowerCase();
   return VALID_YPP_SIGNALS.has(key) ? (key as YppSignalId) : undefined;
+}
+
+export function normalizeObservableSignal(raw?: string | null): ObservableSignalId | undefined {
+  if (!raw) return undefined;
+  const key = raw.trim().toLowerCase();
+  return VALID_OBSERVABLE_SIGNALS.has(key) ? (key as ObservableSignalId) : undefined;
 }
 
 export function formatMonetizationSummary(
@@ -197,15 +218,12 @@ export function getTopObservedCategory(
   return bestKey;
 }
 
-/**
- * Builds a prefilled GitHub Issue URL for zero-cost community metadata suggestions or corrections.
- */
 export function buildGitHubSubmissionUrl(
   baseSubmissionUrl: string,
   ref: ChannelRef,
   options?: {
     topics?: TopicId[];
-    yppSignals?: YppSignalId[];
+    yppSignals?: Array<ObservableSignalId | string>;
     rawYouTubeCategory?: string;
     template?: 'channel-entry.yml' | 'correction.yml';
   },
@@ -215,38 +233,62 @@ export function buildGitHubSubmissionUrl(
 
   try {
     const url = new URL(safeBase);
-    if (options?.template && !url.searchParams.has('template')) {
+    if (options?.template) {
       url.searchParams.set('template', options.template);
     }
-    if (ref.channelId) {
-      url.searchParams.set('channel_id', ref.channelId);
+
+    const cid = normalizeChannelId(ref.channelId);
+    if (cid) {
+      url.searchParams.set('channel_id', cid);
     }
-    if (ref.handle) {
-      const normalized = ref.handle.startsWith('@') ? ref.handle : `@${ref.handle}`;
-      url.searchParams.set('channel_handle', normalized);
+
+    const normHandle = normalizeHandle(ref.handle);
+    let displayHandle: string | undefined;
+    if (normHandle) {
+      const rawTrimmed = ref.handle?.trim() ?? '';
+      const rawStripped = rawTrimmed.startsWith('@') ? rawTrimmed.slice(1) : rawTrimmed;
+      displayHandle =
+        rawStripped && rawStripped.toLowerCase() === normHandle
+          ? `@${rawStripped}`
+          : `@${normHandle}`;
+      url.searchParams.set('channel_handle', displayHandle);
     }
-    if (ref.channelName) {
-      url.searchParams.set('channel_name', ref.channelName);
+
+    if (ref.channelName?.trim()) {
+      url.searchParams.set('channel_name', ref.channelName.trim().slice(0, 120));
     }
-    if (ref.videoId) {
-      url.searchParams.set(
-        'evidence_url',
-        `https://www.youtube.com/watch?v=${ref.videoId}`,
-      );
-    } else if (ref.channelId) {
-      url.searchParams.set(
-        'evidence_url',
-        `https://www.youtube.com/channel/${ref.channelId}`,
-      );
+
+    const vid = extractVideoId(ref.videoId);
+    if (vid) {
+      url.searchParams.set('evidence_url', `https://www.youtube.com/watch?v=${vid}`);
+    } else if (cid) {
+      url.searchParams.set('evidence_url', `https://www.youtube.com/channel/${cid}`);
+    } else if (displayHandle) {
+      url.searchParams.set('evidence_url', `https://www.youtube.com/${displayHandle}`);
     }
-    if (options?.topics && options.topics.length > 0) {
-      url.searchParams.set('topics', options.topics.join(', '));
+
+    const validTopics = (options?.topics ?? [])
+      .map((t) => normalizeTopicId(t))
+      .filter((t): t is TopicId => Boolean(t));
+    const uniqueTopics = Array.from(new Set(validTopics));
+
+    if (uniqueTopics.length > 0) {
+      url.searchParams.set('topics', uniqueTopics.join(', '));
     } else if (options?.rawYouTubeCategory) {
-      url.searchParams.set('topics', options.rawYouTubeCategory);
+      const mapped = mapYouTubeCategoryToTopic(options.rawYouTubeCategory);
+      if (mapped) {
+        url.searchParams.set('topics', mapped);
+      }
     }
-    if (options?.yppSignals && options.yppSignals.length > 0) {
-      url.searchParams.set('signals', options.yppSignals.join(', '));
+
+    const validSignals = (options?.yppSignals ?? [])
+      .map((s) => normalizeObservableSignal(s))
+      .filter((s): s is ObservableSignalId => Boolean(s));
+    const uniqueSignals = Array.from(new Set(validSignals));
+    if (uniqueSignals.length > 0) {
+      url.searchParams.set('signals', uniqueSignals.join(', '));
     }
+
     return url.toString();
   } catch {
     return undefined;

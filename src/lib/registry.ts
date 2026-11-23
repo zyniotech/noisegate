@@ -18,14 +18,14 @@ export const DEFAULT_CORRECTION_ISSUE_URL =
 export const BUNDLED_REGISTRY_ENTRIES: RegistryListEntry[] = [
   {
     id: 'open-channel-topics',
-    name: 'Open Channel Directory — Neutral Topics & Signals (JSON v2)',
+    name: 'Open Channel Directory: Neutral Topics & Signals (JSON v2)',
     description:
-      'Community-maintained, source-backed directory categorizing channels by neutral topics (Science, Gaming, Entertainment, Education) and verifiable disclosures.',
+      'Community-maintained, source-backed directory categorizing channels by neutral topics (Science, Technology, Education, Gaming, Music) and verifiable disclosures.',
     url: 'https://raw.githubusercontent.com/zyniotech/noisegate-lists/main/lists/starter-topics.json',
     homepage: 'https://github.com/zyniotech/noisegate-lists',
     submissionUrl: DEFAULT_SUBMISSION_ISSUE_URL,
     removalUrl: DEFAULT_CORRECTION_ISSUE_URL,
-    defaultAction: 'label',
+    defaultAction: 'pass',
     kind: 'topics',
     maintainer: 'zyniotech / Community',
   },
@@ -33,7 +33,7 @@ export const BUNDLED_REGISTRY_ENTRIES: RegistryListEntry[] = [
     id: 'synthetic-disclosures',
     name: 'Verified Synthetic Disclosures Directory (JSON v2)',
     description:
-      'Small curated directory of channels with verifiable synthetic-content disclosures or automated upload evidence.',
+      'Curated directory reserved strictly for channels with verifiable official YouTube synthetic-content disclosures.',
     url: 'https://raw.githubusercontent.com/zyniotech/noisegate-lists/main/lists/synthetic-disclosures.json',
     homepage: 'https://github.com/zyniotech/noisegate-lists',
     submissionUrl: DEFAULT_SUBMISSION_ISSUE_URL,
@@ -44,7 +44,7 @@ export const BUNDLED_REGISTRY_ENTRIES: RegistryListEntry[] = [
   },
   {
     id: 'aislist-warnlist',
-    name: 'AiSList — Community Warnlist (Plain-Text, ~1.3k Channels)',
+    name: 'AiSList: Community Warnlist (Plain-Text, ~1.3k Channels)',
     description: 'Medium-confidence AI channels maintained upstream by Override92/AiSList.',
     url: 'https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/aislist_warnlist.txt',
     homepage: 'https://github.com/Override92/AiSList',
@@ -54,7 +54,7 @@ export const BUNDLED_REGISTRY_ENTRIES: RegistryListEntry[] = [
   },
   {
     id: 'aislist-blocklist',
-    name: 'AiSList — Full Blocklist (Plain-Text, ~70k Channels)',
+    name: 'AiSList: Full Blocklist (Plain-Text, ~70k Channels)',
     description: 'High-confidence AI channels maintained upstream by Override92/AiSList.',
     url: 'https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/aislist_blocklist.txt',
     homepage: 'https://github.com/Override92/AiSList',

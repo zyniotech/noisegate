@@ -61,7 +61,7 @@ Color is reserved strictly for filter outcomes and channel signals:
 - Primary text (`#F3F4F6`) on Background (`#0A0C10`): >17:1 contrast ratio (AAA).
 - Secondary text (`#94A3B8`) on Surface (`#11141B`): >7.0:1 contrast ratio (AAA).
 - Signal White buttons (`#F8FAFC`) with Obsidian text (`#0A0C10`): >18:1 contrast ratio (AAA).
-- All interactive states use distinct border, icon weight, and text contrast — never relying on color alone.
+- All interactive states use distinct border, icon weight, and text contrast, never relying on color alone.
 
 ---
 
@@ -89,20 +89,20 @@ Color is reserved strictly for filter outcomes and channel signals:
 ### Typographic Rules
 
 - Use `font-variant-numeric: tabular-nums` on every counter, entry count, and telemetry column.
-- Render canonical YouTube channel IDs (`UC...`), `@handles`, format identifiers (`JSON v1`, `Plain-Text`), and URLs in `--font-mono`.
-- Avoid pill badges (`rounded-full` filled chips). Communicate status using a 2–3px left accent stripe, a crisp Phosphor icon (`regular` default, `fill` for active states), and plain typography.
+- Render canonical YouTube channel IDs (`UC...`), `@handles`, format identifiers (`JSON v2`, `JSON v1`, `Plain-Text`), and URLs in `--font-mono`.
+- Avoid pill badges (`rounded-full` filled chips). Communicate status using a 2-3px left accent stripe, a crisp Phosphor icon (`regular` default, `fill` for active states), and plain typography.
 
 ---
 
 ## 3. Logo Usage
 
-The official NoiseGate mark is **J1 — Pure Signal Wave**: an anodized titanium octagon framing a recessed sapphire optical lens, divided by a machined gate shutter that stops jittery noise on the left and lets a pure luminous signal wave pass through on the right.
+The official NoiseGate mark is **J1 - Pure Signal Wave**: an anodized titanium octagon framing a recessed sapphire optical lens, divided by a machined gate shutter that stops jittery noise on the left and lets a pure luminous signal wave pass through on the right.
 
 ### Variants
 
 | Variant | File | Use Case |
 |---------|------|----------|
-| Master Mark (Transparent) | `brand/logo-icon.svg` | Web headers, light/dark embeds, 48px–512px icons |
+| Master Mark (Transparent) | `brand/logo-icon.svg` | Web headers, light/dark embeds, 48px-512px icons |
 | Master Mark (Gunmetal Card) | `brand/logo-icon-card.svg` | Store tiles, avatars, square profiles |
 | Monochrome Mark | `brand/logo-mono.svg` | Single-color print, small UI chrome, watermarks |
 | Horizontal Lockup | `brand/logo-horizontal.svg` | README header, documentation, press kit |
@@ -117,9 +117,9 @@ Maintain a minimum clear space equal to 20% of the octagon width on all four sid
 
 | Context | Minimum Width |
 |---------|---------------|
-| Digital — Horizontal Lockup | 140px |
-| Digital — Icon Mark | 16px (use optical-small variant for 16px–32px) |
-| Print — Full Lockup | 30mm |
+| Digital - Horizontal Lockup | 140px |
+| Digital - Icon Mark | 16px (use optical-small variant for 16px-32px) |
+| Print - Full Lockup | 30mm |
 
 ### Don'ts
 
@@ -132,7 +132,7 @@ Maintain a minimum clear space equal to 20% of the octagon width on all four sid
 
 ## 4. Voice & Tone
 
-### Brand Personality — Quiet Precision
+### Brand Personality - Quiet Precision
 
 | Trait | Description |
 |-------|-------------|
@@ -173,5 +173,5 @@ Maintain a minimum clear space equal to 20% of the octagon width on all four sid
 ## 5. Iconography & UI Polish
 
 - **Icon Library:** Official Phosphor Icons (`@phosphor-icons/react` in React surfaces; raw official SVGs from Phosphor v2.1.1 in YouTube in-page DOM). Base weight: `regular`; active toggle state: `fill`.
-- **Zero Pill Badges:** Never render filled pill tags (`rounded-full px-2 py-0.5`). Use vertical 2–3px accent bars, crisp hairline borders, and typographic hierarchy.
+- **Zero Pill Badges:** Never render filled pill tags (`rounded-full px-2 py-0.5`). Use vertical 2-3px accent bars, crisp hairline borders, and typographic hierarchy.
 - **Motion Discipline:** Fast ease-out (`cubic-bezier(0.23, 1, 0.32, 1)`, 140ms) for popovers only; `:active { transform: scale(0.97) }` tactile feedback on buttons; zero animation on frequent keyboard or feed-scan updates.

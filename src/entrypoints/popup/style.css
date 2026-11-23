@@ -2,27 +2,25 @@
 
 :root {
   color-scheme: dark;
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 body {
   margin: 0;
   width: 396px;
-  min-height: 416px;
+  min-height: 220px;
   max-height: 584px;
   background-color: #090b0f;
   color: #f3f4f6;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-/* Precision thin scrollbar matching anodized titanium surfaces */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;

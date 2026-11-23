@@ -31,32 +31,23 @@ const CARD_SELECTOR = [
   'ytd-compact-video-renderer',
   'ytd-grid-video-renderer',
   'ytd-playlist-video-renderer',
+  'ytd-playlist-panel-video-renderer',
   'ytd-channel-renderer',
   'yt-lockup-view-model',
   'ytd-reel-item-renderer',
   'ytm-shorts-lockup-view-model',
 ].join(',');
 
-const DOM_DISCLOSURE_PHRASES = [
-  'altered or synthetic content',
-  'sound or visuals were significantly edited or digitally generated',
-  'veränderte oder synthetische inhalte',
-  'audio- oder visuelle inhalte wurden erheblich bearbeitet oder digital generiert',
-  'contenu modifié ou synthétique',
-  'contenido alterado o sintético',
-];
-
 const STYLE_ELEMENT_ID = 'noisegate-inpage-style';
 
 const INPAGE_CSS = `
-  /* NoiseGate In-Page Styles — Ultramono Titanium Chrome, Semantic Signal Bars Only */
   [data-ng-card="1"] {
     position: relative;
   }
 
   [data-ng-state="label"],
   [data-ng-state="dim"] {
-    border-left: 2px solid var(--ng-accent, #d97706) !important;
+    box-shadow: inset 2px 0 0 var(--ng-accent, #d97706) !important;
     padding-left: 8px !important;
     box-sizing: border-box;
   }
@@ -76,10 +67,11 @@ const INPAGE_CSS = `
   }
 
   html[data-ng-reveal-hidden="1"] [data-ng-state="hide"] {
-    display: block !important;
+    display: revert !important;
     opacity: 0.48;
-    border-left: 2px dashed var(--ng-accent, #ef4444) !important;
+    box-shadow: inset 2px 0 0 var(--ng-accent, #ef4444) !important;
     padding-left: 8px !important;
+    box-sizing: border-box;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -91,7 +83,6 @@ const INPAGE_CSS = `
     }
   }
 
-  /* Single-line editorial metadata signal row (zero pill badges) */
   .ng-signal-line {
     display: flex;
     align-items: center;
@@ -150,11 +141,10 @@ const INPAGE_CSS = `
     opacity: 1;
   }
 
-  /* Subtle 1-click hover trigger on YouTube cards (Ultramono Titanium) */
   .ng-card-trigger {
     position: absolute;
     top: 6px;
-    right: 6px;
+    left: 6px;
     z-index: 25;
     width: 26px;
     height: 26px;
@@ -181,7 +171,7 @@ const INPAGE_CSS = `
   }
 
   [data-ng-has-signal="1"] > .ng-card-trigger {
-    opacity: 0.8;
+    opacity: 0.85;
     border-color: var(--ng-accent, #94a3b8);
     color: var(--ng-accent, #f8fafc);
   }
@@ -203,7 +193,6 @@ const INPAGE_CSS = `
     display: none !important;
   }
 
-  /* Watch & Channel page neutral context strip */
   .ng-watch-bar,
   .ng-channel-bar {
     display: flex;
@@ -282,6 +271,7 @@ const INPAGE_CSS = `
 
   .ng-watch-inline-trigger {
     margin-left: 8px;
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -321,6 +311,7 @@ interface WatchBridgeDetail {
 }
 
 interface ChannelBridgeDetail {
+  urlPath?: string;
   channelId?: string;
   handle?: string;
   channelName?: string;
@@ -334,6 +325,21 @@ interface CardRecord {
   signature: string;
 }
 
+function parseBridgeDetail<T>(raw: unknown): T | null {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === 'object') {
+    return raw as T;
+  }
+  return null;
+}
+
 async function sendRuntime<T>(request: RuntimeRequest): Promise<T> {
   const response = (await browser.runtime.sendMessage(request)) as
     | RuntimeResponse<T>
@@ -345,7 +351,7 @@ async function sendRuntime<T>(request: RuntimeRequest): Promise<T> {
 }
 
 export default defineContentScript({
-  matches: ['*://*.youtube.com/*'],
+  matches: ['*://www.youtube.com/*', '*://m.youtube.com/*'],
   runAt: 'document_idle',
   main() {
     const popover = new InPagePopoverManager();
@@ -355,8 +361,10 @@ export default defineContentScript({
 
     let revealHidden = false;
     let scanTimer: number | null = null;
+    let navFallbackTimer: number | null = null;
     let scanInFlight = false;
     let rescanQueued = false;
+    let hydratingFromScan = false;
     let lastWatchBridgeInfo: WatchBridgeDetail | null = null;
     let lastChannelBridgeInfo: ChannelBridgeDetail | null = null;
 
@@ -374,7 +382,12 @@ export default defineContentScript({
     }
 
     function requestBridgeHydration(): void {
-      document.dispatchEvent(new CustomEvent('noisegate:hydrate'));
+      hydratingFromScan = true;
+      try {
+        document.dispatchEvent(new CustomEvent('noisegate:hydrate'));
+      } finally {
+        hydratingFromScan = false;
+      }
     }
 
     function openPopoverFor(
@@ -441,7 +454,13 @@ export default defineContentScript({
 
       if (!channelName) {
         const nameNode = card.querySelector<HTMLElement>(
-          'ytd-channel-name yt-formatted-string, #channel-name yt-formatted-string, .yt-content-metadata-view-model-wiz__metadata-row:first-child span',
+          [
+            'ytd-channel-name yt-formatted-string',
+            '#channel-name yt-formatted-string',
+            '#channel-title yt-formatted-string',
+            '.yt-content-metadata-view-model__metadata-row:first-child span',
+            '.yt-content-metadata-view-model-wiz__metadata-row:first-child span',
+          ].join(', '),
         );
         const text = nameNode?.textContent?.trim();
         if (text) channelName = text;
@@ -463,10 +482,14 @@ export default defineContentScript({
       const candidates = [
         'ytd-video-meta-block #metadata',
         'ytd-video-meta-block',
+        '#info-section',
         '#meta',
         '#channel-info',
+        '.yt-lockup-metadata-view-model__text-container',
+        '.yt-content-metadata-view-model',
         '.yt-lockup-metadata-view-model-wiz__text-container',
         '.yt-content-metadata-view-model-wiz',
+        '.shortsLockupViewModelHostMetadataContainer',
         '#details',
       ];
       for (const selector of candidates) {
@@ -489,6 +512,11 @@ export default defineContentScript({
         return;
       }
 
+      const renderSig = `${decision.action}|${decision.category}|${decision.primaryLabel}|${decision.sourceName}|${decision.evidenceUrl ?? ''}|${decision.note ?? ''}`;
+      if (existing && existing.dataset.ngRenderSig === renderSig) {
+        return;
+      }
+
       const meta = getCategoryMeta(decision.category);
       const accent =
         decision.category === 'topic-match' && decision.matchedTopic
@@ -497,8 +525,8 @@ export default defineContentScript({
 
       const line = existing ?? document.createElement('div');
       line.className = 'ng-signal-line';
+      line.dataset.ngRenderSig = renderSig;
       line.style.setProperty('--ng-accent', accent);
-      line.innerHTML = '';
 
       const iconWrap = document.createElement('span');
       iconWrap.className = 'ng-signal-icon';
@@ -525,10 +553,7 @@ export default defineContentScript({
       sourceSpan.className = 'ng-signal-source';
       sourceSpan.textContent = decision.sourceName;
 
-      line.appendChild(iconWrap);
-      line.appendChild(labelSpan);
-      line.appendChild(sep);
-      line.appendChild(sourceSpan);
+      const children: Node[] = [iconWrap, labelSpan, sep, sourceSpan];
 
       const safeEvidence = sanitizeHttpUrl(decision.evidenceUrl);
       if (safeEvidence) {
@@ -540,11 +565,13 @@ export default defineContentScript({
         link.title = decision.note || 'Open source evidence';
         link.appendChild(createPhosphorSvg('arrow-square-out', 12));
         link.addEventListener('click', (e) => e.stopPropagation());
-        line.appendChild(link);
+        children.push(link);
       }
 
+      line.replaceChildren(...children);
+
       if (decision.note) {
-        line.title = `${decision.primaryLabel} (${decision.sourceName}) — ${decision.note}`;
+        line.title = `${decision.primaryLabel} (${decision.sourceName}) - ${decision.note}`;
       } else {
         line.title = `${decision.primaryLabel} (${decision.sourceName})`;
       }
@@ -634,50 +661,37 @@ export default defineContentScript({
     function detectWatchDomDisclosure(): boolean {
       if (!location.pathname.startsWith('/watch')) return false;
 
-      const howMade = document.querySelector('how-this-was-made-section-view-model');
+      const watchFlexy = document.querySelector('ytd-watch-flexy:not([hidden])');
+      const scope = watchFlexy ?? document;
+      const howMade = scope.querySelector('how-this-was-made-section-view-model');
       if (howMade && (howMade.textContent?.trim().length ?? 0) > 10) {
         return true;
-      }
-
-      const containers = [
-        document.querySelector('ytd-structured-description-content-renderer'),
-        document.querySelector('ytd-watch-metadata #description-inline-expander'),
-        document.querySelector('ytd-watch-metadata #info-container'),
-      ];
-
-      for (const el of containers) {
-        const text = el?.textContent?.toLowerCase();
-        if (!text) continue;
-        if (DOM_DISCLOSURE_PHRASES.some((phrase) => text.includes(phrase))) {
-          return true;
-        }
       }
 
       return false;
     }
 
+    function readWatchBridgeDetail(urlVideoId?: string): WatchBridgeDetail | null {
+      const candidate =
+        lastWatchBridgeInfo ??
+        parseBridgeDetail<WatchBridgeDetail>(document.documentElement.dataset.ngWatchInfo);
+      if (!candidate) return null;
+      if (candidate.videoId && urlVideoId && candidate.videoId !== urlVideoId) {
+        return null;
+      }
+      return candidate;
+    }
+
     function extractWatchPageRef(): ChannelRef {
       const videoId = extractVideoId(location.href);
-      let channelId = normalizeChannelId(lastWatchBridgeInfo?.channelId);
-      let handle = normalizeHandle(lastWatchBridgeInfo?.handle);
-      let channelName = lastWatchBridgeInfo?.channelName;
+      const bridgeInfo = readWatchBridgeDetail(videoId);
+      let channelId = normalizeChannelId(bridgeInfo?.channelId);
+      let handle = normalizeHandle(bridgeInfo?.handle);
+      let channelName = bridgeInfo?.channelName;
 
-      if ((!channelId || !handle) && document.documentElement.dataset.ngWatchInfo) {
-        try {
-          const parsed = JSON.parse(
-            document.documentElement.dataset.ngWatchInfo,
-          ) as WatchBridgeDetail;
-          if (!parsed.videoId || parsed.videoId === videoId) {
-            if (!channelId) channelId = normalizeChannelId(parsed.channelId);
-            if (!handle) handle = normalizeHandle(parsed.handle);
-            if (!channelName) channelName = parsed.channelName;
-          }
-        } catch {
-          // Ignore malformed JSON
-        }
-      }
-
-      const owner = document.querySelector('ytd-watch-metadata ytd-video-owner-renderer');
+      const owner = document.querySelector(
+        'ytd-watch-flexy:not([hidden]) ytd-watch-metadata ytd-video-owner-renderer',
+      );
       if (owner) {
         const link = owner.querySelector<HTMLAnchorElement>(
           'ytd-channel-name a, a[href*="/@"], a[href*="/channel/UC"]',
@@ -695,20 +709,21 @@ export default defineContentScript({
       return { videoId, channelId, handle, channelName };
     }
 
-    async function processWatchPage(): Promise<void> {
+    async function processWatchPage(): Promise<{
+      channelId?: string;
+      handle?: string;
+      channelName: string;
+      decision: ResolvedDecision;
+    } | null> {
       if (!location.pathname.startsWith('/watch')) {
         document.querySelector('.ng-watch-bar')?.remove();
         document.querySelector('.ng-watch-inline-trigger')?.remove();
-        return;
+        return null;
       }
 
       const ref = extractWatchPageRef();
       const videoId = ref.videoId;
-
-      const bridgeInfo =
-        lastWatchBridgeInfo && (!lastWatchBridgeInfo.videoId || lastWatchBridgeInfo.videoId === videoId)
-          ? lastWatchBridgeInfo
-          : null;
+      const bridgeInfo = readWatchBridgeDetail(videoId);
 
       const bridgeDisclosure = Boolean(bridgeInfo?.hasOfficialDisclosure);
       const domDisclosure = detectWatchDomDisclosure();
@@ -725,11 +740,9 @@ export default defineContentScript({
             source: bridgeDisclosure ? 'watch-data' : 'watch-dom',
           });
         } catch {
-          // Non-fatal
         }
       }
 
-      // Report neutral YPP monetization, paid promotion & YouTube topic category
       if ((ref.channelId || ref.handle) && bridgeInfo) {
         const yppSignals = bridgeInfo.yppSignals ?? [];
         const telSig = [
@@ -754,12 +767,15 @@ export default defineContentScript({
               hasPaidPromotion: Boolean(bridgeInfo.hasPaidPromotion),
             });
           } catch {
-            // Non-fatal
           }
         }
       }
 
-      if (!ref.channelId && !ref.handle && !ref.videoId) return;
+      if (!ref.channelId && !ref.handle && !ref.videoId) {
+        document.querySelector('.ng-watch-bar')?.remove();
+        document.querySelector('.ng-watch-inline-trigger')?.remove();
+        return null;
+      }
 
       let decision: ResolvedDecision | undefined;
       try {
@@ -781,12 +797,13 @@ export default defineContentScript({
         });
         decision = evalMap.watch;
       } catch {
-        return;
+        return null;
       }
 
-      if (!decision) return;
+      if (!decision) return null;
 
-      const ownerContainer = document.querySelector<HTMLElement>(
+      const watchFlexy = document.querySelector('ytd-watch-flexy:not([hidden])');
+      const ownerContainer = watchFlexy?.querySelector<HTMLElement>(
         'ytd-watch-metadata #owner',
       );
       if (ownerContainer) {
@@ -800,16 +817,19 @@ export default defineContentScript({
           ownerContainer.appendChild(trigger);
         }
 
-        trigger.innerHTML = '';
-        trigger.appendChild(createPhosphorSvg('waveform', 14));
-        const label = document.createElement('span');
-        label.textContent =
+        const triggerText =
           decision.action !== 'none'
             ? decision.action === 'allow'
               ? 'Trusted'
               : decision.primaryLabel
             : 'NoiseGate';
-        trigger.appendChild(label);
+
+        if (trigger.dataset.ngTriggerText !== triggerText) {
+          trigger.dataset.ngTriggerText = triggerText;
+          const label = document.createElement('span');
+          label.textContent = triggerText;
+          trigger.replaceChildren(createPhosphorSvg('waveform', 14), label);
+        }
 
         trigger.onclick = (e) => {
           e.preventDefault();
@@ -818,10 +838,10 @@ export default defineContentScript({
         };
       }
 
-      const titleContainer = document.querySelector<HTMLElement>(
+      const titleContainer = watchFlexy?.querySelector<HTMLElement>(
         'ytd-watch-metadata #title',
       );
-      const existingBar = document.querySelector<HTMLElement>('.ng-watch-bar');
+      const existingBar = watchFlexy?.querySelector<HTMLElement>('.ng-watch-bar') ?? null;
 
       const hasActionOrDisclosure =
         decision.action === 'label' ||
@@ -836,7 +856,13 @@ export default defineContentScript({
 
       if ((!hasActionOrDisclosure && !hasNeutralMeta) || !titleContainer) {
         existingBar?.remove();
-        return;
+        return {
+          channelId: ref.channelId,
+          handle: ref.handle,
+          channelName:
+            ref.channelName || formatHandle(ref.handle) || ref.channelId || 'Channel',
+          decision,
+        };
       }
 
       const meta = hasActionOrDisclosure
@@ -851,55 +877,11 @@ export default defineContentScript({
           ? TOPICS[decision.matchedTopic]?.accentColor ?? '#94a3b8'
           : meta?.accentColor ?? '#94a3b8';
 
-      const bar = existingBar ?? document.createElement('div');
-      bar.className = 'ng-watch-bar';
-      bar.style.setProperty('--ng-accent', barAccent);
-      bar.innerHTML = '';
-
-      const left = document.createElement('div');
-      left.className = 'ng-watch-bar-left';
-
-      const iconEl = document.createElement('span');
-      iconEl.className = 'ng-watch-bar-icon';
-      iconEl.appendChild(
-        createPhosphorSvg(
-          hasActionOrDisclosure
-            ? decision.hasOfficialDisclosure && decision.origin === 'disclosure'
-              ? 'sparkle'
-              : meta!.icon
-            : decision.observedYppSignals.length > 0
-              ? 'currency-circle-dollar'
-              : 'television',
-          15,
-        ),
-      );
-
-      const textWrap = document.createElement('div');
-      textWrap.className = 'ng-watch-bar-text';
-
-      if (hasActionOrDisclosure) {
-        const strong = document.createElement('strong');
-        strong.textContent =
-          decision.action !== 'none' && decision.action !== 'allow'
-            ? `${decision.primaryLabel} · ${decision.sourceName}`
-            : 'YouTube Synthetic Disclosure Detected';
-        textWrap.appendChild(strong);
-
-        if (decision.note) {
-          const noteSpan = document.createElement('span');
-          noteSpan.className = 'ng-watch-bar-note';
-          noteSpan.textContent = decision.note;
-          textWrap.appendChild(noteSpan);
-        }
-      }
-
-      // Append neutral factual Topic + YPP Monetization metadata
       const metaItems: string[] = [];
       if (cachedShowTopic) {
-        const topicLabel =
-          decision.topics[0]
-            ? TOPICS[decision.topics[0]]?.label ?? decision.topics[0]
-            : decision.rawYouTubeCategory;
+        const topicLabel = decision.topics[0]
+          ? TOPICS[decision.topics[0]]?.label ?? decision.topics[0]
+          : decision.rawYouTubeCategory;
         if (topicLabel) {
           metaItems.push(`Topic: ${topicLabel}`);
         }
@@ -916,37 +898,115 @@ export default defineContentScript({
         metaItems.push('Paid promotion disclosed');
       }
 
-      if (metaItems.length > 0) {
-        const metaSpan = document.createElement('span');
-        metaSpan.className = 'ng-watch-bar-meta';
-        metaSpan.textContent =
-          (hasActionOrDisclosure ? '· ' : '') + metaItems.join(' · ');
-        textWrap.appendChild(metaSpan);
+      const barSig = [
+        ref.channelId ?? '',
+        ref.handle ?? '',
+        decision.action,
+        decision.category,
+        decision.primaryLabel,
+        decision.sourceName,
+        decision.note ?? '',
+        metaItems.join('|'),
+        barAccent,
+      ].join('::');
+
+      const bar = existingBar ?? document.createElement('div');
+      bar.className = 'ng-watch-bar';
+
+      if (bar.dataset.ngBarSig !== barSig) {
+        bar.dataset.ngBarSig = barSig;
+        bar.style.setProperty('--ng-accent', barAccent);
+
+        const left = document.createElement('div');
+        left.className = 'ng-watch-bar-left';
+
+        const iconEl = document.createElement('span');
+        iconEl.className = 'ng-watch-bar-icon';
+        iconEl.appendChild(
+          createPhosphorSvg(
+            hasActionOrDisclosure
+              ? decision.hasOfficialDisclosure && decision.origin === 'disclosure'
+                ? 'sparkle'
+                : meta!.icon
+              : decision.observedYppSignals.length > 0
+                ? 'currency-circle-dollar'
+                : 'television',
+            15,
+          ),
+        );
+
+        const textWrap = document.createElement('div');
+        textWrap.className = 'ng-watch-bar-text';
+
+        if (hasActionOrDisclosure) {
+          const strong = document.createElement('strong');
+          strong.textContent =
+            decision.action !== 'none' && decision.action !== 'allow'
+              ? `${decision.primaryLabel} · ${decision.sourceName}`
+              : 'YouTube Synthetic Disclosure Detected';
+          textWrap.appendChild(strong);
+
+          if (decision.note) {
+            const noteSpan = document.createElement('span');
+            noteSpan.className = 'ng-watch-bar-note';
+            noteSpan.textContent = decision.note;
+            textWrap.appendChild(noteSpan);
+          }
+        }
+
+        if (metaItems.length > 0) {
+          const metaSpan = document.createElement('span');
+          metaSpan.className = 'ng-watch-bar-meta';
+          metaSpan.textContent =
+            (hasActionOrDisclosure ? '· ' : '') + metaItems.join(' · ');
+          textWrap.appendChild(metaSpan);
+        }
+
+        left.appendChild(iconEl);
+        left.appendChild(textWrap);
+
+        const manageBtn = document.createElement('button');
+        manageBtn.type = 'button';
+        manageBtn.className = 'ng-watch-action-btn';
+        manageBtn.appendChild(createPhosphorSvg('waveform', 13));
+        manageBtn.appendChild(document.createTextNode('Channel Controls'));
+        manageBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openPopoverFor(manageBtn, ref, decision!);
+        });
+
+        bar.replaceChildren(left, manageBtn);
+      } else {
+        const manageBtn = bar.querySelector<HTMLButtonElement>('.ng-watch-action-btn');
+        if (manageBtn) {
+          manageBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openPopoverFor(manageBtn, ref, decision!);
+          };
+        }
       }
-
-      left.appendChild(iconEl);
-      left.appendChild(textWrap);
-
-      const manageBtn = document.createElement('button');
-      manageBtn.type = 'button';
-      manageBtn.className = 'ng-watch-action-btn';
-      manageBtn.appendChild(createPhosphorSvg('waveform', 13));
-      manageBtn.appendChild(document.createTextNode('Channel Controls'));
-      manageBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openPopoverFor(manageBtn, ref, decision!);
-      });
-
-      bar.appendChild(left);
-      bar.appendChild(manageBtn);
 
       if (!existingBar) {
         titleContainer.insertAdjacentElement('afterend', bar);
       }
+
+      return {
+        channelId: ref.channelId,
+        handle: ref.handle,
+        channelName:
+          ref.channelName || formatHandle(ref.handle) || ref.channelId || 'Channel',
+        decision,
+      };
     }
 
-    async function processChannelPage(): Promise<void> {
+    async function processChannelPage(): Promise<{
+      channelId?: string;
+      handle?: string;
+      channelName: string;
+      decision: ResolvedDecision;
+    } | null> {
       const isChannelPath =
         location.pathname.startsWith('/@') ||
         location.pathname.startsWith('/channel/') ||
@@ -955,21 +1015,24 @@ export default defineContentScript({
 
       if (!isChannelPath) {
         document.querySelector('.ng-channel-bar')?.remove();
-        return;
+        return null;
       }
 
       let chInfo = lastChannelBridgeInfo;
       if (!chInfo && document.documentElement.dataset.ngChannelInfo) {
-        try {
-          chInfo = JSON.parse(
-            document.documentElement.dataset.ngChannelInfo,
-          ) as ChannelBridgeDetail;
-        } catch {
-          // Ignore
-        }
+        chInfo = parseBridgeDetail<ChannelBridgeDetail>(
+          document.documentElement.dataset.ngChannelInfo,
+        );
       }
 
-      if (!chInfo || (!chInfo.channelId && !chInfo.handle)) return;
+      if (chInfo?.urlPath && chInfo.urlPath !== location.pathname) {
+        chInfo = null;
+      }
+
+      if (!chInfo || (!chInfo.channelId && !chInfo.handle)) {
+        document.querySelector('.ng-channel-bar')?.remove();
+        return null;
+      }
 
       const ref: ChannelRef = {
         channelId: normalizeChannelId(chInfo.channelId),
@@ -989,7 +1052,6 @@ export default defineContentScript({
             monetizationInspected: Boolean(chInfo.monetizationInspected),
           });
         } catch {
-          // Non-fatal
         }
       }
 
@@ -1012,36 +1074,25 @@ export default defineContentScript({
         });
         decision = evalMap.channel;
       } catch {
-        return;
+        return null;
       }
 
-      if (!decision) return;
+      if (!decision) return null;
 
-      const headerHost = document.querySelector<HTMLElement>(
-        'ytd-browse[page-subtype="channels"] #page-header, ytd-c4-tabbed-header-renderer #inner-header-container',
+      const browseRoot = document.querySelector(
+        'ytd-browse[page-subtype="channels"]:not([hidden])',
       );
-      if (!headerHost) return;
+      const headerHost = browseRoot?.querySelector<HTMLElement>(
+        '#page-header, ytd-c4-tabbed-header-renderer #inner-header-container',
+      );
+      if (!headerHost) return null;
 
-      const existingBar = document.querySelector<HTMLElement>('.ng-channel-bar');
-      const bar = existingBar ?? document.createElement('div');
-      bar.className = 'ng-channel-bar';
-      bar.style.setProperty(
-        '--ng-accent',
+      const accentColor =
         decision.action === 'allow'
           ? '#10b981'
           : decision.action !== 'none'
             ? getCategoryMeta(decision.category).accentColor
-            : '#94a3b8',
-      );
-      bar.innerHTML = '';
-
-      const left = document.createElement('div');
-      left.className = 'ng-watch-bar-left';
-
-      const iconEl = document.createElement('span');
-      iconEl.className = 'ng-watch-bar-icon';
-      iconEl.appendChild(createPhosphorSvg('waveform', 15));
-      left.appendChild(iconEl);
+            : '#94a3b8';
 
       const parts: string[] = [];
       if (decision.action !== 'none') {
@@ -1066,28 +1117,64 @@ export default defineContentScript({
         );
       }
 
-      const textSpan = document.createElement('span');
-      textSpan.className = 'ng-watch-bar-meta';
-      textSpan.textContent = parts.join(' · ') || 'NoiseGate Channel Overview';
-      left.appendChild(textSpan);
+      const barText = parts.join(' · ') || 'NoiseGate Channel Overview';
+      const chBarSig = `${ref.channelId ?? ''}|${ref.handle ?? ''}|${accentColor}|${barText}`;
 
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'ng-watch-action-btn';
-      btn.appendChild(createPhosphorSvg('tag', 13));
-      btn.appendChild(document.createTextNode('Channel Controls'));
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openPopoverFor(btn, ref, decision!);
-      });
+      const existingBar = browseRoot?.querySelector<HTMLElement>('.ng-channel-bar') ?? null;
+      const bar = existingBar ?? document.createElement('div');
+      bar.className = 'ng-channel-bar';
 
-      bar.appendChild(left);
-      bar.appendChild(btn);
+      if (bar.dataset.ngBarSig !== chBarSig) {
+        bar.dataset.ngBarSig = chBarSig;
+        bar.style.setProperty('--ng-accent', accentColor);
+
+        const left = document.createElement('div');
+        left.className = 'ng-watch-bar-left';
+
+        const iconEl = document.createElement('span');
+        iconEl.className = 'ng-watch-bar-icon';
+        iconEl.appendChild(createPhosphorSvg('waveform', 15));
+        left.appendChild(iconEl);
+
+        const textSpan = document.createElement('span');
+        textSpan.className = 'ng-watch-bar-meta';
+        textSpan.textContent = barText;
+        left.appendChild(textSpan);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ng-watch-action-btn';
+        btn.appendChild(createPhosphorSvg('tag', 13));
+        btn.appendChild(document.createTextNode('Channel Controls'));
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openPopoverFor(btn, ref, decision!);
+        });
+
+        bar.replaceChildren(left, btn);
+      } else {
+        const btn = bar.querySelector<HTMLButtonElement>('.ng-watch-action-btn');
+        if (btn) {
+          btn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openPopoverFor(btn, ref, decision!);
+          };
+        }
+      }
 
       if (!existingBar) {
         headerHost.insertAdjacentElement('afterend', bar);
       }
+
+      return {
+        channelId: ref.channelId,
+        handle: ref.handle,
+        channelName:
+          ref.channelName || formatHandle(ref.handle) || ref.channelId || 'Channel',
+        decision,
+      };
     }
 
     async function runScan(forceAll = false): Promise<void> {
@@ -1115,7 +1202,6 @@ export default defineContentScript({
             document.documentElement.dataset.ngHideTriggers = '1';
           }
         } catch {
-          // Ignore
         }
 
         const cards = collectTopLevelCards();
@@ -1172,8 +1258,10 @@ export default defineContentScript({
           }
         }
 
-        await processWatchPage();
-        await processChannelPage();
+        const [watchVisible, channelVisible] = await Promise.all([
+          processWatchPage(),
+          processChannelPage(),
+        ]);
 
         let labeledCount = 0;
         let dimmedCount = 0;
@@ -1191,6 +1279,15 @@ export default defineContentScript({
           }
         >();
 
+        for (const ownerItem of [watchVisible, channelVisible]) {
+          if (ownerItem) {
+            const key = ownerItem.channelId ?? ownerItem.handle;
+            if (key && !visibleChannelsMap.has(key)) {
+              visibleChannelsMap.set(key, ownerItem);
+            }
+          }
+        }
+
         for (const card of cards) {
           const rec = cardRecords.get(card);
           if (!rec) continue;
@@ -1202,7 +1299,7 @@ export default defineContentScript({
           if (d.hasOfficialDisclosure) disclosureCount++;
 
           const key = rec.ref.channelId ?? rec.ref.handle;
-          if (key && visibleChannelsMap.size < 18 && !visibleChannelsMap.has(key)) {
+          if (key && !visibleChannelsMap.has(key)) {
             visibleChannelsMap.set(key, {
               channelId: rec.ref.channelId,
               handle: rec.ref.handle,
@@ -1213,11 +1310,13 @@ export default defineContentScript({
           }
         }
 
-        const visibleChannels = Array.from(visibleChannelsMap.values()).sort((a, b) => {
-          const score = (act: ResolvedDecision['action']) =>
-            act === 'hide' ? 4 : act === 'dim' ? 3 : act === 'label' ? 2 : act === 'allow' ? 1 : 0;
-          return score(b.decision.action) - score(a.decision.action);
-        });
+        const score = (act: ResolvedDecision['action']) =>
+          act === 'hide' ? 4 : act === 'dim' ? 3 : act === 'label' ? 2 : act === 'allow' ? 1 : 0;
+
+        const sortedVisible = Array.from(visibleChannelsMap.values()).sort(
+          (a, b) => score(b.decision.action) - score(a.decision.action),
+        );
+        const visibleChannels = sortedVisible.slice(0, 18);
 
         const stats: PageStats = {
           url: location.href,
@@ -1237,7 +1336,6 @@ export default defineContentScript({
           stats,
         });
       } catch {
-        // Extension context may be reloading during dev
       } finally {
         scanInFlight = false;
         if (rescanQueued) {
@@ -1258,27 +1356,61 @@ export default defineContentScript({
     }
 
     document.addEventListener('noisegate:watch-info', (evt: Event) => {
-      const custom = evt as CustomEvent<WatchBridgeDetail>;
-      if (custom.detail) {
-        lastWatchBridgeInfo = custom.detail;
-        scheduleScan(false, 120);
+      const parsed = parseBridgeDetail<WatchBridgeDetail>((evt as CustomEvent).detail);
+      if (parsed) {
+        lastWatchBridgeInfo = parsed;
+        if (!hydratingFromScan) {
+          scheduleScan(false, 120);
+        }
       }
     });
 
     document.addEventListener('noisegate:channel-info', (evt: Event) => {
-      const custom = evt as CustomEvent<ChannelBridgeDetail>;
-      if (custom.detail) {
-        lastChannelBridgeInfo = custom.detail;
-        scheduleScan(false, 120);
+      const parsed = parseBridgeDetail<ChannelBridgeDetail>((evt as CustomEvent).detail);
+      if (parsed) {
+        lastChannelBridgeInfo = parsed;
+        if (!hydratingFromScan) {
+          scheduleScan(false, 120);
+        }
       }
     });
 
-    window.addEventListener('yt-navigate-finish', () => {
-      popover.close();
+    window.addEventListener('yt-navigate-start', () => {
+      popover.close(false);
+      lastWatchBridgeInfo = null;
+      lastChannelBridgeInfo = null;
+      if (navFallbackTimer !== null) {
+        window.clearTimeout(navFallbackTimer);
+        navFallbackTimer = null;
+      }
+      document.querySelector('.ng-watch-bar')?.remove();
+      document.querySelector('.ng-watch-inline-trigger')?.remove();
+      document.querySelector('.ng-channel-bar')?.remove();
+    });
+
+    window.addEventListener('popstate', () => {
+      popover.close(false);
       lastWatchBridgeInfo = null;
       lastChannelBridgeInfo = null;
       scheduleScan(true, 180);
-      window.setTimeout(() => scheduleScan(false, 50), 900);
+    });
+
+    window.addEventListener('yt-navigate-finish', () => {
+      popover.close(false);
+      lastWatchBridgeInfo = parseBridgeDetail<WatchBridgeDetail>(
+        document.documentElement.dataset.ngWatchInfo,
+      );
+      lastChannelBridgeInfo = parseBridgeDetail<ChannelBridgeDetail>(
+        document.documentElement.dataset.ngChannelInfo,
+      );
+      if (navFallbackTimer !== null) {
+        window.clearTimeout(navFallbackTimer);
+      }
+      scheduleScan(true, 180);
+      navFallbackTimer = window.setTimeout(() => {
+        navFallbackTimer = null;
+        scheduleScan(false, 50);
+      }, 900);
     });
 
     window.addEventListener('yt-page-data-updated', () => {
@@ -1312,11 +1444,9 @@ export default defineContentScript({
             const node = m.addedNodes[j];
             if (node instanceof HTMLElement) {
               if (
-                node.classList.contains('ng-signal-line') ||
-                node.classList.contains('ng-card-trigger') ||
-                node.classList.contains('ng-watch-bar') ||
-                node.classList.contains('ng-channel-bar') ||
-                node.id === 'noisegate-popover-host'
+                node.closest(
+                  '.ng-signal-line, .ng-card-trigger, .ng-watch-bar, .ng-channel-bar, .ng-watch-inline-trigger, #noisegate-popover-host',
+                )
               ) {
                 continue;
               }

@@ -1,26 +1,30 @@
 <p align="center">
-  <img src="./brand/banner-1280x640.png" alt="NoiseGate — Transparent channel signals for YouTube" width="100%" />
+  <img src="./brand/banner-1280x640.png" alt="NoiseGate - Neutral channel signals for YouTube" width="100%" />
 </p>
 
 # NoiseGate
 
-**Label, dim, or hide YouTube channels using official synthetic disclosures, local rules, and open filter lists.**
+**Label, dim, or hide YouTube channels using neutral topic controls, official disclosures, local rules, and open filter lists.**
 
-NoiseGate is an MIT-licensed Manifest V3 browser extension for Chrome, Edge, and Firefox. It operates as a neutral client in the uBlock model: you pick the filter lists you trust, choose how matches look in your feed, and keep full local override over every channel.
+NoiseGate is an MIT-licensed Manifest V3 browser extension for Chrome, Edge, and Firefox. It operates as a neutral client in the uBlock model: you pick the filter lists and topics you want to highlight or hide, and keep full local override over every channel.
 
 ---
 
-## Three Layers of Control
+## Core Capabilities
 
-1. **Official YouTube Disclosures (Layer 1)**
-   YouTube only displays its "Altered or synthetic content" notice inside the video description on the Watch page. NoiseGate detects that disclosure automatically, highlights it beneath the video title, and caches the video and channel locally so the signal stays visible when you return to Home, Search, or Subscriptions.
+1. **Neutral Channel Topic Controls**
+   Categorizes channels under 12 neutral topics (`Science`, `Technology`, `Education`, `Gaming`, `Music`, `Entertainment`, etc.) from YouTube metadata, local tags, or open Topic Directories (`Pass | Label | Dim | Hide`).
 
-2. **One-Click Local Rules (Layer 2)**
-   Hover over any YouTube video card or use the Watch-page control to mark a channel as **Label**, **Dim**, **Hide**, or **Trust**. Local rules live in `storage.local`, export to plain JSON, and override every subscribed community list.
+2. **Official YouTube Disclosures & Partner Signals**
+   YouTube only displays its "Altered or synthetic content" label inside Watch pages, and Paid Promotion disclosures only per video. NoiseGate detects those official disclosures plus verifiable public YouTube Partner Program features (`Memberships`, `Super Thanks`, `Super Chat`, `Shopping`) without ever guessing monetization from ads.
 
-3. **Subscribable Open Filter Lists (Layer 3)**
-   Subscribe to any static HTTPS filter list hosted on GitHub, jsDelivr, or your own server. NoiseGate validates and parses both:
-   - **NoiseGate JSON v1** (structured `UC...` channel IDs and `@handles` with neutral categories, notes, and source evidence URLs)
+3. **One-Click Local Rules**
+   Hover over any YouTube video card or use the Watch-page control to assign **Label**, **Dim**, **Hide**, or **Trust**. Local rules live in `storage.local`, export to plain JSON, and override every topic rule and subscribed list.
+
+4. **Subscribable Open Filter Lists**
+   Subscribe to any static HTTPS filter list hosted on GitHub, jsDelivr, or your own server. NoiseGate validates and parses:
+   - **NoiseGate JSON v2** (neutral `topics` + verifiable `signals`, evidence URLs, and GitHub Issue Form links)
+   - **NoiseGate JSON v1** (structured `UC...` channel IDs and `@handles` with categories, notes, and evidence links)
    - **Plain-Text AiSList format** (`! Title:` headers with one `@handle` or `UC...` ID per line)
 
 ### Conflict Resolution
@@ -65,8 +69,8 @@ npm run build:firefox  # Firefox MV3      -> .output/firefox-mv3
 
 NoiseGate separates extension code from community filter data:
 
-- **Extension Client (`zyniotech/noisegate`)** — Source code, Ultramono-Titanium UI, local topic/signal resolver, tests.
-- **Open Filter Lists ([`zyniotech/noisegate-lists`](https://github.com/zyniotech/noisegate-lists))** — CC0-1.0 community topic directory (`registry.json`, JSON v2 catalogs), prefilled Issue Forms, and schema/neutrality validation CI.
+- **Extension Client (`zyniotech/noisegate`)**: Source code, Ultramono-Titanium UI, local topic/signal resolver, tests.
+- **Open Filter Lists ([`zyniotech/noisegate-lists`](https://github.com/zyniotech/noisegate-lists))**: CC0-1.0 community topic directory (`registry.json`, JSON v2 catalogs), prefilled Issue Forms, and schema/neutrality validation CI.
 
 ---
 

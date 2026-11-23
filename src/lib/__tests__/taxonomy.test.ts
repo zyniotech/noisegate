@@ -44,4 +44,25 @@ describe('taxonomy, monetization formatting & GitHub deep-links', () => {
     expect(parsed.searchParams.get('topics')).toBe('technology, education');
     expect(parsed.searchParams.get('signals')).toBe('ypp-memberships');
   });
+
+  it('overwrites wrong template params, uses handle evidence fallback, and maps raw categories cleanly', () => {
+    const url = buildGitHubSubmissionUrl(
+      'https://github.com/zyniotech/noisegate-lists/issues/new?template=correction.yml',
+      {
+        handle: 'mkbhd',
+        channelName: 'Marques Brownlee',
+      },
+      {
+        rawYouTubeCategory: 'Wissenschaft & Technik',
+        yppSignals: ['yt-paid-promotion', 'ypp-shopping'],
+        template: 'channel-entry.yml',
+      },
+    );
+    expect(url).toBeDefined();
+    const parsed = new URL(url!);
+    expect(parsed.searchParams.get('template')).toBe('channel-entry.yml');
+    expect(parsed.searchParams.get('evidence_url')).toBe('https://www.youtube.com/@mkbhd');
+    expect(parsed.searchParams.get('topics')).toBe('science');
+    expect(parsed.searchParams.get('signals')).toBe('yt-paid-promotion, ypp-shopping');
+  });
 });

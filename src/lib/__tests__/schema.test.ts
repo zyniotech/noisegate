@@ -87,7 +87,7 @@ UC_x5XG1OV2P6uZZ5FSM9Ttw
           name: 'Open Channel Directory',
           description: 'Neutral topic directory',
           url: 'https://raw.githubusercontent.com/zyniotech/noisegate-lists/main/lists/starter-topics.json',
-          defaultAction: 'label',
+          defaultAction: 'pass',
           kind: 'topics',
           maintainer: 'zyniotech',
         },
@@ -100,5 +100,52 @@ UC_x5XG1OV2P6uZZ5FSM9Ttw
     });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe('topics');
+    expect(entries[0]?.defaultAction).toBe('pass');
+  });
+
+  it('rejects HTML/CSS captive portal responses and unsafe prototype keys', () => {
+    const htmlRes = parseFilterListContent('<!doctype html><html><body>@media screen {}</body></html>');
+    expect(htmlRes.ok).toBe(false);
+
+    const cssRes = parseFilterListContent('@media (min-width: 600px) { .test { color: red; } }');
+    expect(cssRes.ok).toBe(false);
+
+    const protoList = parseJsonFilterList({
+      schemaVersion: 2,
+      listId: 'constructor',
+      name: 'Safety Check',
+      updatedAt: '2026-11-23T00:00:00Z',
+      channels: {},
+      handles: {
+        '@constructor': { topics: ['science'] },
+        '@toString': { signals: ['yt-paid-promotion'] },
+      },
+    });
+    expect(protoList.ok).toBe(true);
+    if (protoList.ok) {
+      expect(protoList.list.entries).toHaveLength(0);
+    }
+  });
+
+  it('infers disclosure-detected and paid-promotion categories accurately in Schema v2', () => {
+    const res = parseJsonFilterList({
+      schemaVersion: 2,
+      listId: 'signals-test',
+      name: 'Signals Test',
+      updatedAt: '2026-11-23T00:00:00Z',
+      channels: {
+        'UCYO_jab_esuFRV4b17AJtAw': {
+          signals: ['yt-synthetic-disclosure', 'invalid-signal'],
+        },
+        'UCHnyfMqiRRG1u-2MsSQLbXA': {
+          signals: ['yt-paid-promotion'],
+        },
+      },
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.list.entries[0]?.category).toBe('disclosure-detected');
+    expect(res.list.entries[0]?.signals).toEqual(['yt-synthetic-disclosure']);
+    expect(res.list.entries[1]?.category).toBe('paid-promotion');
   });
 });

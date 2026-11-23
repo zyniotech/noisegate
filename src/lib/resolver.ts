@@ -1,6 +1,12 @@
 import { getCategoryMeta } from './categories';
 import { normalizeChannelId, normalizeHandle } from './normalize';
-import { getTopObservedCategory, TOPICS, YPP_SIGNAL_LABELS } from './taxonomy';
+import {
+  getTopObservedCategory,
+  mapYouTubeCategoryToTopic,
+  normalizeYppSignal,
+  TOPICS,
+  YPP_SIGNAL_LABELS,
+} from './taxonomy';
 import type {
   ChannelDisclosureStats,
   ChannelProfile,
@@ -11,13 +17,24 @@ import type {
   LocalRule,
   ResolvedDecision,
   TopicId,
+  TopicRuleAction,
   UserSettings,
+  YppSignalId,
 } from './types';
 
-const ACTION_SEVERITY: Record<FilterAction, number> = {
+const ACTION_SEVERITY: Record<TopicRuleAction, number> = {
+  pass: 0,
   label: 1,
   dim: 2,
   hide: 3,
+};
+
+const ORIGIN_TIE_BREAK: Record<'disclosure' | 'paid-promo' | 'topic' | 'list' | 'ypp', number> = {
+  disclosure: 5,
+  'paid-promo': 4,
+  topic: 3,
+  list: 2,
+  ypp: 1,
 };
 
 export interface ResolveInput {
@@ -30,21 +47,17 @@ export interface ResolveInput {
   channelProfile?: ChannelProfile;
 }
 
-/**
- * Finds the best matching local rule for a channel reference.
- * Prefers exact UC... channelId match over @handle match.
- */
 export function findMatchingLocalRule(
   ref: ChannelRef,
   localRulesById: Record<string, LocalRule>,
   localRulesByHandle: Record<string, LocalRule>,
 ): LocalRule | undefined {
   const cid = normalizeChannelId(ref.channelId);
-  if (cid && localRulesById[cid]) {
+  if (cid && Object.hasOwn(localRulesById, cid)) {
     return localRulesById[cid];
   }
   const handle = normalizeHandle(ref.handle);
-  if (handle && localRulesByHandle[handle]) {
+  if (handle && Object.hasOwn(localRulesByHandle, handle)) {
     return localRulesByHandle[handle];
   }
   return undefined;
@@ -58,7 +71,7 @@ function collectEffectiveTopics(
   const ordered: TopicId[] = [];
   const seen = new Set<TopicId>();
   const add = (t: TopicId) => {
-    if (!seen.has(t)) {
+    if (Object.hasOwn(TOPICS, t) && !seen.has(t)) {
       seen.add(t);
       ordered.push(t);
     }
@@ -82,9 +95,35 @@ function collectEffectiveTopics(
   return ordered;
 }
 
+function collectEffectiveYppSignals(
+  channelProfile: ChannelProfile | undefined,
+  listMatches: ListMatchSource[],
+): YppSignalId[] {
+  const ordered: YppSignalId[] = [];
+  const seen = new Set<YppSignalId>();
+  for (const s of channelProfile?.yppSignals ?? []) {
+    const norm = normalizeYppSignal(s);
+    if (norm && !seen.has(norm)) {
+      seen.add(norm);
+      ordered.push(norm);
+    }
+  }
+  for (const m of listMatches) {
+    for (const rawSignal of m.signals) {
+      const norm = normalizeYppSignal(rawSignal);
+      if (norm && !seen.has(norm)) {
+        seen.add(norm);
+        ordered.push(norm);
+      }
+    }
+  }
+  return ordered;
+}
+
 interface CandidateOutcome {
   action: FilterAction;
   origin: Exclude<ResolvedDecision['origin'], 'none' | 'local'>;
+  tieRank: number;
   category: string;
   primaryLabel: string;
   sourceName: string;
@@ -93,13 +132,6 @@ interface CandidateOutcome {
   matchedTopic?: TopicId;
 }
 
-/**
- * Deterministic neutral multi-layer conflict resolver:
- * 1. Local channel rules ALWAYS win over lists, topics, and signals (including Trust/Allow).
- * 2. Otherwise evaluate all enabled rule sources (Community Lists, Layer 1 Official Disclosures,
- *    Topic Rule Matrix, Paid Promotion rule, YPP Monetization rule) and apply the strictest
- *    configured action (`Hide > Dim > Label`), while preserving complete factual metadata.
- */
 export function resolveDecision(input: ResolveInput): ResolvedDecision {
   const {
     ref,
@@ -111,24 +143,31 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
     channelProfile,
   } = input;
 
+  const sortedLists = [...listMatches].sort(
+    (a, b) => ACTION_SEVERITY[b.action] - ACTION_SEVERITY[a.action],
+  );
+
   const hasVideoDisclosure = Boolean(videoDisclosure);
   const disclosureVideoCount = channelDisclosure?.videoIds.length ?? (hasVideoDisclosure ? 1 : 0);
   const hasChannelDisclosure =
     settings.propagateChannelDisclosure && disclosureVideoCount > 0;
-  const hasOfficialDisclosure = hasVideoDisclosure || hasChannelDisclosure;
+  const hasListSyntheticDisclosure = sortedLists.some((m) =>
+    m.signals.includes('yt-synthetic-disclosure'),
+  );
+  const hasOfficialDisclosure =
+    hasVideoDisclosure || hasChannelDisclosure || hasListSyntheticDisclosure;
 
-  const topics = collectEffectiveTopics(localRule, listMatches, channelProfile);
+  const topics = collectEffectiveTopics(localRule, sortedLists, channelProfile);
   const rawYouTubeCategory = getTopObservedCategory(
     channelProfile?.observedYouTubeCategories,
   );
-  const observedYppSignals = channelProfile?.yppSignals ?? [];
+  const observedYppSignals = collectEffectiveYppSignals(channelProfile, sortedLists);
   const monetizationInspected = Boolean(channelProfile?.monetizationInspected);
 
   const hasVideoPaidPromotion = Boolean(
     ref.videoId && channelProfile?.paidPromotionVideoIds.includes(ref.videoId),
   );
-  const hasPaidPromotion =
-    hasVideoPaidPromotion || (channelProfile?.paidPromotionVideoIds.length ?? 0) > 0;
+  const hasPaidPromotion = hasVideoPaidPromotion;
 
   const baseMetadata = {
     topics,
@@ -145,7 +184,7 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
       category: '',
       primaryLabel: '',
       sourceName: '',
-      listMatches,
+      listMatches: sortedLists,
       hasOfficialDisclosure,
       disclosureVideoCount,
       overrodeListCount: 0,
@@ -153,7 +192,8 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
     };
   }
 
-  // Layer 2: Local rule ALWAYS takes precedence (including Allow / Trust override)
+  const actionableListCount = sortedLists.filter((m) => m.action !== 'pass').length;
+
   if (localRule) {
     if (localRule.action === 'allow') {
       return {
@@ -163,15 +203,20 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
         primaryLabel: 'Trusted (Local Override)',
         sourceName: 'Local Rule',
         note: localRule.note,
-        listMatches,
+        listMatches: sortedLists,
         hasOfficialDisclosure,
         disclosureVideoCount,
-        overrodeListCount: listMatches.length,
+        overrodeListCount: actionableListCount,
         ...baseMetadata,
       };
     }
 
     const meta = getCategoryMeta(localRule.category);
+    const localSeverity = ACTION_SEVERITY[localRule.action];
+    const overriddenCount = sortedLists.filter(
+      (m) => ACTION_SEVERITY[m.action] > localSeverity,
+    ).length;
+
     return {
       action: localRule.action,
       origin: 'local',
@@ -179,36 +224,37 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
       primaryLabel: meta.shortLabel,
       sourceName: 'Your Rule',
       note: localRule.note,
-      listMatches,
+      listMatches: sortedLists,
       hasOfficialDisclosure,
       disclosureVideoCount,
-      overrodeListCount: 0,
+      overrodeListCount: overriddenCount,
       ...baseMetadata,
     };
   }
 
   const candidates: CandidateOutcome[] = [];
 
-  // Layer 3: Community filter lists
-  const sortedLists = [...listMatches].sort(
-    (a, b) => ACTION_SEVERITY[b.action] - ACTION_SEVERITY[a.action],
-  );
-  if (sortedLists.length > 0) {
-    const winner = sortedLists[0]!;
+  const actionableLists = sortedLists.filter((m) => m.action !== 'pass');
+  if (actionableLists.length > 0) {
+    const winner = actionableLists[0]!;
     const meta = getCategoryMeta(winner.category);
     const sourceSummary =
-      sortedLists.length > 1
-        ? `${winner.listName} (+${sortedLists.length - 1})`
+      actionableLists.length > 1
+        ? `${winner.listName} (+${actionableLists.length - 1})`
         : winner.listName;
 
     const topicText =
       winner.topics.length > 0
-        ? winner.topics.map((t) => TOPICS[t]?.shortLabel ?? t).join(', ')
+        ? winner.topics
+            .filter((t) => Object.hasOwn(TOPICS, t))
+            .map((t) => TOPICS[t].shortLabel)
+            .join(', ')
         : undefined;
 
     candidates.push({
-      action: winner.action,
+      action: winner.action as FilterAction,
       origin: 'list',
+      tieRank: ORIGIN_TIE_BREAK.list,
       category: winner.category,
       primaryLabel:
         winner.category === 'topic-match' && topicText ? topicText : meta.shortLabel,
@@ -218,44 +264,60 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
     });
   }
 
-  // Layer 1: Official YouTube "Altered or synthetic content" disclosure
   if (hasOfficialDisclosure) {
     const meta = getCategoryMeta('disclosure-detected');
+    const safeDisclosureAction: FilterAction =
+      settings.disclosureAction === 'dim' || settings.disclosureAction === 'hide'
+        ? settings.disclosureAction
+        : 'label';
     candidates.push({
-      action: settings.disclosureAction,
+      action: safeDisclosureAction,
       origin: 'disclosure',
+      tieRank: ORIGIN_TIE_BREAK.disclosure,
       category: 'disclosure-detected',
       primaryLabel: meta.shortLabel,
       sourceName: 'YouTube Disclosure',
       note: hasVideoDisclosure
         ? 'YouTube disclosed altered or synthetic content on this video.'
-        : `Official synthetic disclosure seen on ${disclosureVideoCount} video${disclosureVideoCount === 1 ? '' : 's'} from this channel.`,
+        : hasChannelDisclosure
+          ? `Official synthetic disclosure seen on ${disclosureVideoCount} video${disclosureVideoCount === 1 ? '' : 's'} from this channel.`
+          : 'Community directory verified an official synthetic-content disclosure for this channel.',
     });
   }
 
-  // Topic Rule Matrix (Neutral user-controlled category filtering: Gaming, Entertainment, etc.)
+  const rawMatchedTopic = mapYouTubeCategoryToTopic(rawYouTubeCategory);
   for (const topic of topics) {
-    const ruleAction = settings.topicRules?.[topic];
-    if (!ruleAction || ruleAction === 'pass') continue;
+    if (!Object.hasOwn(TOPICS, topic)) continue;
+    const topicRules = settings.topicRules ?? {};
+    const ruleAction = Object.hasOwn(topicRules, topic) ? topicRules[topic] : undefined;
+    if (!ruleAction || ruleAction === 'pass' || !Object.hasOwn(ACTION_SEVERITY, ruleAction)) {
+      continue;
+    }
     const topicMeta = TOPICS[topic];
     candidates.push({
       action: ruleAction,
       origin: 'topic',
+      tieRank: ORIGIN_TIE_BREAK.topic,
       category: 'topic-match',
       primaryLabel: topicMeta.label,
       sourceName: 'Topic Filter',
-      note: rawYouTubeCategory
-        ? `Matched YouTube category "${rawYouTubeCategory}".`
-        : `Channel categorized under ${topicMeta.label}.`,
+      note:
+        rawYouTubeCategory && rawMatchedTopic === topic
+          ? `Matched YouTube category "${rawYouTubeCategory}".`
+          : `Channel categorized under ${topicMeta.label}.`,
       matchedTopic: topic,
     });
   }
 
-  // Official Paid Promotion signal
-  if (hasVideoPaidPromotion && settings.paidPromotionAction !== 'pass') {
+  if (
+    hasVideoPaidPromotion &&
+    settings.paidPromotionAction !== 'pass' &&
+    Object.hasOwn(ACTION_SEVERITY, settings.paidPromotionAction)
+  ) {
     candidates.push({
       action: settings.paidPromotionAction,
       origin: 'signal',
+      tieRank: ORIGIN_TIE_BREAK['paid-promo'],
       category: 'paid-promotion',
       primaryLabel: 'Paid Promotion',
       sourceName: 'YouTube Disclosure',
@@ -263,12 +325,16 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
     });
   }
 
-  // Observed YPP Partner monetization signals (only acts if user chose Label/Dim/Hide; default is Pass)
-  if (observedYppSignals.length > 0 && settings.monetizedAction !== 'pass') {
+  if (
+    observedYppSignals.length > 0 &&
+    settings.monetizedAction !== 'pass' &&
+    Object.hasOwn(ACTION_SEVERITY, settings.monetizedAction)
+  ) {
     const names = observedYppSignals.map((s) => YPP_SIGNAL_LABELS[s] ?? s).join(', ');
     candidates.push({
       action: settings.monetizedAction,
       origin: 'signal',
+      tieRank: ORIGIN_TIE_BREAK.ypp,
       category: 'ypp-monetized',
       primaryLabel: 'YPP Monetized',
       sourceName: names,
@@ -277,7 +343,10 @@ export function resolveDecision(input: ResolveInput): ResolvedDecision {
   }
 
   if (candidates.length > 0) {
-    candidates.sort((a, b) => ACTION_SEVERITY[b.action] - ACTION_SEVERITY[a.action]);
+    candidates.sort(
+      (a, b) =>
+        ACTION_SEVERITY[b.action] - ACTION_SEVERITY[a.action] || b.tieRank - a.tieRank,
+    );
     const winner = candidates[0]!;
     return {
       action: winner.action,

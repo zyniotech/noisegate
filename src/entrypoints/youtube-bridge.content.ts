@@ -4,6 +4,7 @@ const CARD_SELECTOR = [
   'ytd-compact-video-renderer',
   'ytd-grid-video-renderer',
   'ytd-playlist-video-renderer',
+  'ytd-playlist-panel-video-renderer',
   'ytd-channel-renderer',
   'yt-lockup-view-model',
   'ytd-reel-item-renderer',
@@ -48,6 +49,7 @@ interface WatchPageInfo {
 }
 
 interface ChannelPageInfo {
+  urlPath: string;
   channelId?: string;
   handle?: string;
   channelName?: string;
@@ -60,7 +62,7 @@ type PolymerElement = HTMLElement & {
   __data?: { data?: unknown; item?: unknown };
   __dataHost?: { data?: unknown; __data?: { data?: unknown } };
   polymerController?: { data?: unknown };
-  componentProps?: { data?: unknown };
+  componentProps?: { data?: unknown } & Record<string, unknown>;
 };
 
 interface WindowWithYouTube extends Window {
@@ -71,9 +73,34 @@ interface WindowWithYouTube extends Window {
 const lastDataRef = new WeakMap<Element, unknown>();
 let lastNavigateResponse: unknown = null;
 let lastPlayerResponse: unknown = null;
+let hasSpaNavigated = false;
+let pendingNavTimer: number | null = null;
+let lastSerializedWatchInfo = '';
+let lastSerializedChannelInfo = '';
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
+}
+
+function isVisibleEl(el: Element | null): el is HTMLElement {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.hidden || el.closest('[hidden]')) return false;
+  if (typeof el.checkVisibility === 'function') {
+    return el.checkVisibility({ checkOpacity: false, checkVisibilityCSS: false });
+  }
+  return el.getClientRects().length > 0;
+}
+
+function extractVideoIdFromUrl(href: string): string | undefined {
+  try {
+    const url = new URL(href, location.origin);
+    const v = url.searchParams.get('v');
+    if (v && VIDEO_ID_RE.test(v)) return v;
+    const pathMatch = url.pathname.match(/\/(?:shorts|live|embed)\/([a-zA-Z0-9_-]{11})/);
+    if (pathMatch?.[1]) return pathMatch[1];
+  } catch {
+  }
+  return undefined;
 }
 
 function extractHandleFromPath(path?: unknown): string | undefined {
@@ -96,11 +123,12 @@ function getElementData(el: Element): unknown {
   if (poly.__data?.item) return poly.__data.item;
   if (poly.polymerController?.data) return poly.polymerController.data;
   if (poly.componentProps?.data) return poly.componentProps.data;
+  if (poly.componentProps && isObj(poly.componentProps)) return poly.componentProps;
   if (poly.__dataHost?.data) return poly.__dataHost.data;
   return null;
 }
 
-function extractFromCardData(root: unknown): ExtractedCardInfo {
+function extractFromCardData(root: unknown, maxDepth = 15): ExtractedCardInfo {
   const info: ExtractedCardInfo = {};
   if (!isObj(root)) return info;
 
@@ -112,7 +140,7 @@ function extractFromCardData(root: unknown): ExtractedCardInfo {
   while (stack.length > 0) {
     const current = stack.pop()!;
     const { node, depth } = current;
-    if (depth > 9 || visited.has(node)) continue;
+    if (depth > maxDepth || visited.has(node)) continue;
     visited.add(node);
 
     if (!info.videoId) {
@@ -170,7 +198,11 @@ function extractFromCardData(root: unknown): ExtractedCardInfo {
 
     if (!info.channelName && Array.isArray(node.metadataRows) && node.metadataRows.length > 0) {
       const firstRow = node.metadataRows[0];
-      if (isObj(firstRow) && Array.isArray(firstRow.metadataParts) && firstRow.metadataParts.length > 0) {
+      if (
+        isObj(firstRow) &&
+        Array.isArray(firstRow.metadataParts) &&
+        firstRow.metadataParts.length > 0
+      ) {
         const firstPart = firstRow.metadataParts[0];
         if (
           isObj(firstPart) &&
@@ -193,10 +225,13 @@ function extractFromCardData(root: unknown): ExtractedCardInfo {
         key === 'thumbnails' ||
         key === 'trackingParams' ||
         key === 'loggingDirectives' ||
-        key === 'menu' ||
         key === 'accessibility' ||
         key === 'badges' ||
-        key === 'thumbnailOverlays'
+        key === 'thumbnailOverlays' ||
+        key === 'secondaryResults' ||
+        key === 'engagementPanels' ||
+        key === 'playerOverlays' ||
+        key === 'contents'
       ) {
         continue;
       }
@@ -226,7 +261,7 @@ function hydrateCard(el: Element): void {
     return;
   }
 
-  const info = extractFromCardData(data);
+  const info = extractFromCardData(data, 15);
   lastDataRef.set(el, data);
 
   const htmlEl = el as HTMLElement;
@@ -271,6 +306,20 @@ interface TelemetryScanResult {
   youtubeCategory?: string;
 }
 
+function extractRootVideoId(root: Record<string, unknown>): string | undefined {
+  if (isObj(root.videoDetails) && typeof root.videoDetails.videoId === 'string') {
+    return root.videoDetails.videoId;
+  }
+  if (
+    isObj(root.currentVideoEndpoint) &&
+    isObj(root.currentVideoEndpoint.watchEndpoint) &&
+    typeof root.currentVideoEndpoint.watchEndpoint.videoId === 'string'
+  ) {
+    return root.currentVideoEndpoint.watchEndpoint.videoId;
+  }
+  return undefined;
+}
+
 function scanTelemetrySignals(root: unknown, targetVideoId?: string): TelemetryScanResult {
   const result: TelemetryScanResult = {
     hasOfficialDisclosure: false,
@@ -280,13 +329,14 @@ function scanTelemetrySignals(root: unknown, targetVideoId?: string): TelemetryS
 
   if (!isObj(root)) return result;
 
-  // Quick check for microformat category & videoId match on player responses
+  const rootVideoId = extractRootVideoId(root);
+  if (targetVideoId && rootVideoId && rootVideoId !== targetVideoId) {
+    return result;
+  }
+
   if (isObj(root.microformat) && isObj(root.microformat.playerMicroformatRenderer)) {
     const mf = root.microformat.playerMicroformatRenderer;
-    const vd = isObj(root.videoDetails) ? root.videoDetails : null;
-    const matchesVideo =
-      !targetVideoId || !vd || vd.videoId === targetVideoId;
-    if (matchesVideo && typeof mf.category === 'string' && mf.category.trim()) {
+    if (typeof mf.category === 'string' && mf.category.trim()) {
       result.youtubeCategory = mf.category.trim();
     }
   }
@@ -298,10 +348,9 @@ function scanTelemetrySignals(root: unknown, targetVideoId?: string): TelemetryS
 
   while (stack.length > 0) {
     const { node, depth } = stack.pop()!;
-    if (depth > 14 || visited.has(node)) continue;
+    if (depth > 15 || visited.has(node)) continue;
     visited.add(node);
 
-    // 1. Official YouTube altered/synthetic disclosure
     if (!result.hasOfficialDisclosure && isObj(node.howThisWasMadeSectionViewModel)) {
       const sectionStr = JSON.stringify(node.howThisWasMadeSectionViewModel).toLowerCase();
       if (
@@ -319,48 +368,54 @@ function scanTelemetrySignals(root: unknown, targetVideoId?: string): TelemetryS
       result.hasOfficialDisclosure = true;
     }
 
-    // 2. Official Paid Promotion disclosure
     if (isObj(node.paidContentOverlayRenderer) || node.hasPaidContentOverlay === true) {
       result.hasPaidPromotion = true;
     }
 
-    // 3. Hard YPP Partner Monetization signals (never inferred from ads!)
-    if (isObj(node.sponsorButton) || isObj(node.sponsorshipsOfferings)) {
-      result.yppSignals.add('ypp-memberships');
-    }
     if (
+      isObj(node.sponsorButton) ||
+      isObj(node.sponsorshipsOfferings) ||
       isObj(node.showSponsorshipsEngagementPanelCommand) ||
       isObj(node.sponsorshipsPurchaseEndpoint)
     ) {
       result.yppSignals.add('ypp-memberships');
     }
 
-    // Super Thanks / Pdg money heart action button
-    if (node.iconType === 'MONEY_HEART' || node.iconName === 'MONEY_HEART') {
-      result.yppSignals.add('ypp-super-thanks');
-    }
     if (
-      isObj(node.pdgCommentsEntryPoint) ||
-      isObj(node.superThanksButton) ||
-      (typeof node.commandUrl === 'string' && node.commandUrl.includes('sponsorships'))
+      typeof node.commandUrl === 'string' &&
+      (node.commandUrl.includes('sponsorships') || /\/join(?:$|\?)/.test(node.commandUrl))
     ) {
-      if (typeof node.commandUrl === 'string' && node.commandUrl.includes('sponsorships')) {
-        result.yppSignals.add('ypp-memberships');
-      } else {
-        result.yppSignals.add('ypp-super-thanks');
-      }
+      result.yppSignals.add('ypp-memberships');
     }
 
-    // YouTube Shopping / Merch Shelf
-    if (isObj(node.merchandiseShelfRenderer) || isObj(node.productShelfRenderer)) {
+    const urlEp = node.urlEndpoint;
+    if (isObj(urlEp) && typeof urlEp.url === 'string' && /\/join(?:$|\?)/.test(urlEp.url)) {
+      result.yppSignals.add('ypp-memberships');
+    }
+
+    if (
+      node.iconType === 'MONEY_HEART' ||
+      node.iconName === 'MONEY_HEART' ||
+      isObj(node.pdgCommentsEntryPoint) ||
+      isObj(node.superThanksButton)
+    ) {
+      result.yppSignals.add('ypp-super-thanks');
+    }
+
+    if (
+      isObj(node.merchandiseShelfRenderer) ||
+      isObj(node.productShelfRenderer) ||
+      isObj(node.productListRenderer) ||
+      isObj(node.shoppingOverlayRenderer)
+    ) {
       result.yppSignals.add('ypp-shopping');
     }
 
-    // Live chat Super Chat / Super Stickers
     if (
       isObj(node.liveChatPaidMessageRenderer) ||
       isObj(node.liveChatPaidStickerRenderer) ||
-      isObj(node.liveChatTickerPaidMessageItemRenderer)
+      isObj(node.liveChatTickerPaidMessageItemRenderer) ||
+      isObj(node.liveChatProductButtonRenderer)
     ) {
       result.yppSignals.add('ypp-super-chat');
     }
@@ -374,19 +429,13 @@ function scanTelemetrySignals(root: unknown, targetVideoId?: string): TelemetryS
         key === 'adaptiveFormats' ||
         key === 'storyboards' ||
         key === 'captions' ||
-        key === 'secondaryResults'
+        key === 'secondaryResults' ||
+        key === 'relatedResults'
       ) {
         continue;
       }
 
-      if (typeof value === 'string') {
-        if (!result.hasOfficialDisclosure && value.length >= 20 && value.length <= 260) {
-          const lower = value.toLowerCase();
-          if (DISCLOSURE_PHRASES.some((p) => lower.includes(p))) {
-            result.hasOfficialDisclosure = true;
-          }
-        }
-      } else if (Array.isArray(value)) {
+      if (Array.isArray(value)) {
         const limit = Math.min(value.length, 40);
         for (let i = 0; i < limit; i++) {
           const item = value[i];
@@ -403,49 +452,105 @@ function scanTelemetrySignals(root: unknown, targetVideoId?: string): TelemetryS
   return result;
 }
 
-function detectDomYppAndPromo(signals: Set<YppSignal>): { hasPaidPromoDom: boolean } {
-  // Join / Channel Memberships button rendered in DOM
-  const sponsorBtn = document.querySelector(
-    'ytd-watch-metadata #sponsor-button ytd-button-renderer, ytd-c4-tabbed-header-renderer #sponsor-button ytd-button-renderer, yt-flexible-actions-view-model button[aria-label*="Join"], ytd-video-owner-renderer #sponsor-button button',
-  );
-  if (sponsorBtn) {
-    signals.add('ypp-memberships');
+function detectDomYppAndPromo(
+  signals: Set<YppSignal>,
+  scope: 'watch' | 'channel',
+): { hasPaidPromoDom: boolean } {
+  const rootSelector =
+    scope === 'watch'
+      ? 'ytd-watch-flexy:not([hidden]), ytd-shorts:not([hidden])'
+      : 'ytd-browse[page-subtype="channels"]:not([hidden])';
+
+  const container = document.querySelector(rootSelector);
+  if (container && isVisibleEl(container)) {
+    const sponsorSelectors =
+      scope === 'watch'
+        ? [
+            '#sponsor-button ytd-button-renderer',
+            '#sponsor-button button',
+            'a[href*="/sponsor"]',
+            'a[href$="/join"]',
+          ]
+        : [
+            '#sponsor-button ytd-button-renderer',
+            '#sponsor-button button',
+            'yt-flexible-actions-view-model a[href$="/join"]',
+            'yt-flexible-actions-view-model a[href*="/join?"]',
+          ];
+
+    for (const sel of sponsorSelectors) {
+      const match = container.querySelector(sel);
+      if (match && isVisibleEl(match)) {
+        signals.add('ypp-memberships');
+        break;
+      }
+    }
+
+    if (scope === 'watch') {
+      const thanksBtn = container.querySelector(
+        'ytd-watch-metadata ytd-menu-renderer button[aria-label*="Thanks" i], ytd-watch-metadata ytd-menu-renderer button[aria-label*="Super Thanks" i], ytd-watch-metadata ytd-menu-renderer button[aria-label*="Danke" i], ytd-watch-metadata ytd-menu-renderer button[aria-label*="Merci" i], ytd-watch-metadata ytd-menu-renderer button[aria-label*="Gracias" i]',
+      );
+      if (thanksBtn && isVisibleEl(thanksBtn)) {
+        signals.add('ypp-super-thanks');
+      }
+    }
+
+    const merchShelf = container.querySelector(
+      'ytd-merch-shelf-renderer, ytd-product-shelf-renderer, yt-shopping-product-card-view-model',
+    );
+    if (merchShelf && isVisibleEl(merchShelf)) {
+      signals.add('ypp-shopping');
+    }
   }
 
-  // Super Thanks button rendered in action bar
-  const thanksBtn = document.querySelector(
-    'ytd-watch-metadata ytd-menu-renderer button[aria-label*="Thanks" i], ytd-watch-metadata ytd-menu-renderer button[aria-label*="Super Thanks" i], ytd-watch-metadata ytd-menu-renderer button[aria-label*="Danke" i]',
-  );
-  if (thanksBtn) {
-    signals.add('ypp-super-thanks');
+  let hasPaidPromoDom = false;
+  if (scope === 'watch') {
+    const paidOverlay = document.querySelector(
+      '#movie_player .ytp-paid-content-overlay',
+    );
+    if (
+      paidOverlay &&
+      isVisibleEl(paidOverlay) &&
+      (paidOverlay.textContent?.trim().length ?? 0) > 2
+    ) {
+      hasPaidPromoDom = true;
+    }
   }
-
-  // Shopping / Merch shelf
-  const merchShelf = document.querySelector(
-    'ytd-merch-shelf-renderer, ytd-product-shelf-renderer',
-  );
-  if (merchShelf) {
-    signals.add('ypp-shopping');
-  }
-
-  // Paid promotion overlay
-  const paidOverlay = document.querySelector('.ytp-paid-content-overlay');
-  const hasPaidPromoDom = Boolean(
-    paidOverlay && (paidOverlay.textContent?.trim().length ?? 0) > 2,
-  );
 
   return { hasPaidPromoDom };
 }
 
-function inspectWatchPage(): void {
-  if (!location.pathname.startsWith('/watch')) return;
+function dispatchWatchInfo(detail: WatchPageInfo): void {
+  const serialized = JSON.stringify(detail);
+  document.documentElement.dataset.ngWatchInfo = serialized;
+  if (serialized === lastSerializedWatchInfo) return;
+  lastSerializedWatchInfo = serialized;
+  document.dispatchEvent(new CustomEvent('noisegate:watch-info', { detail: serialized }));
+}
 
-  const urlVideoId = new URLSearchParams(location.search).get('v') ?? undefined;
+function dispatchChannelInfo(detail: ChannelPageInfo): void {
+  const serialized = JSON.stringify(detail);
+  document.documentElement.dataset.ngChannelInfo = serialized;
+  if (serialized === lastSerializedChannelInfo) return;
+  lastSerializedChannelInfo = serialized;
+  document.dispatchEvent(new CustomEvent('noisegate:channel-info', { detail: serialized }));
+}
+
+function inspectWatchPage(): void {
+  const isWatchOrShorts =
+    location.pathname.startsWith('/watch') || location.pathname.startsWith('/shorts/');
+  if (!isWatchOrShorts) {
+    delete document.documentElement.dataset.ngWatchInfo;
+    lastSerializedWatchInfo = '';
+    return;
+  }
+
+  const urlVideoId = extractVideoIdFromUrl(location.href);
   const win = window as WindowWithYouTube;
 
-  const watchFlexy = document.querySelector('ytd-watch-flexy');
-  const watchMeta = document.querySelector('ytd-watch-metadata');
-  const ownerEl = document.querySelector('ytd-video-owner-renderer');
+  const watchFlexy = document.querySelector('ytd-watch-flexy:not([hidden])');
+  const watchMeta = watchFlexy?.querySelector('ytd-watch-metadata') ?? null;
+  const ownerEl = watchMeta?.querySelector('ytd-video-owner-renderer') ?? null;
 
   const sources: unknown[] = [
     watchMeta ? getElementData(watchMeta) : null,
@@ -453,8 +558,8 @@ function inspectWatchPage(): void {
     watchFlexy ? getElementData(watchFlexy) : null,
     lastNavigateResponse,
     lastPlayerResponse,
-    win.ytInitialData,
-    win.ytInitialPlayerResponse,
+    !hasSpaNavigated ? win.ytInitialData : null,
+    !hasSpaNavigated ? win.ytInitialPlayerResponse : null,
   ].filter(Boolean);
 
   let channelId: string | undefined;
@@ -465,9 +570,33 @@ function inspectWatchPage(): void {
   let youtubeCategory: string | undefined;
   const yppSignals = new Set<YppSignal>();
 
+  const playerSources = [
+    lastPlayerResponse,
+    !hasSpaNavigated ? win.ytInitialPlayerResponse : null,
+  ].filter(isObj);
+
+  for (const ps of playerSources) {
+    const vd = isObj(ps.videoDetails) ? ps.videoDetails : null;
+    if (vd && (!urlVideoId || vd.videoId === urlVideoId)) {
+      if (typeof vd.channelId === 'string' && CHANNEL_ID_RE.test(vd.channelId)) {
+        channelId = vd.channelId;
+      }
+      if (typeof vd.author === 'string' && vd.author.trim()) {
+        channelName = vd.author.trim();
+      }
+      if (
+        isObj(ps.microformat) &&
+        isObj(ps.microformat.playerMicroformatRenderer) &&
+        typeof ps.microformat.playerMicroformatRenderer.category === 'string'
+      ) {
+        youtubeCategory = ps.microformat.playerMicroformatRenderer.category.trim();
+      }
+    }
+  }
+
   for (const src of sources) {
     if (!channelId || !handle || !channelName) {
-      const extracted = extractFromCardData(src);
+      const extracted = extractFromCardData(src, 12);
       if (!channelId && extracted.channelId) channelId = extracted.channelId;
       if (!handle && extracted.handle) handle = extracted.handle;
       if (!channelName && extracted.channelName) channelName = extracted.channelName;
@@ -480,33 +609,10 @@ function inspectWatchPage(): void {
     for (const sig of scan.yppSignals) yppSignals.add(sig);
   }
 
-  // Explicitly verify playerResponse.videoDetails
-  const playerSources = [lastPlayerResponse, win.ytInitialPlayerResponse].filter(isObj);
-  for (const ps of playerSources) {
-    if (isObj(ps.videoDetails)) {
-      const vd = ps.videoDetails;
-      if (!urlVideoId || vd.videoId === urlVideoId) {
-        if (typeof vd.channelId === 'string' && CHANNEL_ID_RE.test(vd.channelId)) {
-          channelId = vd.channelId;
-        }
-        if (typeof vd.author === 'string' && !channelName) {
-          channelName = vd.author;
-        }
-      }
-    }
-    if (isObj(ps.microformat) && isObj(ps.microformat.playerMicroformatRenderer)) {
-      const mf = ps.microformat.playerMicroformatRenderer;
-      const vd = isObj(ps.videoDetails) ? ps.videoDetails : null;
-      if ((!urlVideoId || !vd || vd.videoId === urlVideoId) && typeof mf.category === 'string') {
-        youtubeCategory = mf.category.trim();
-      }
-    }
-  }
-
-  const domChecks = detectDomYppAndPromo(yppSignals);
+  const domChecks = detectDomYppAndPromo(yppSignals, 'watch');
   if (domChecks.hasPaidPromoDom) hasPaidPromotion = true;
 
-  const detail: WatchPageInfo = {
+  dispatchWatchInfo({
     videoId: urlVideoId,
     channelId,
     handle,
@@ -517,10 +623,7 @@ function inspectWatchPage(): void {
     hasPaidPromotion,
     yppSignals: Array.from(yppSignals),
     monetizationInspected: Boolean(watchMeta || ownerEl || sources.length > 0),
-  };
-
-  document.documentElement.dataset.ngWatchInfo = JSON.stringify(detail);
-  document.dispatchEvent(new CustomEvent('noisegate:watch-info', { detail }));
+  });
 }
 
 function isChannelPagePath(pathname: string): boolean {
@@ -533,19 +636,23 @@ function isChannelPagePath(pathname: string): boolean {
 }
 
 function inspectChannelPage(): void {
-  if (!isChannelPagePath(location.pathname)) return;
+  if (!isChannelPagePath(location.pathname)) {
+    delete document.documentElement.dataset.ngChannelInfo;
+    lastSerializedChannelInfo = '';
+    return;
+  }
 
   const win = window as WindowWithYouTube;
-  const browseEl = document.querySelector('ytd-browse[page-subtype="channels"]');
-  const headerEl = document.querySelector(
+  const browseEl = document.querySelector('ytd-browse[page-subtype="channels"]:not([hidden])');
+  const headerEl = browseEl?.querySelector(
     'ytd-c4-tabbed-header-renderer, yt-page-header-renderer, yt-page-header-view-model',
-  );
+  ) ?? null;
 
   const sources: unknown[] = [
     headerEl ? getElementData(headerEl) : null,
     browseEl ? getElementData(browseEl) : null,
     lastNavigateResponse,
-    win.ytInitialData,
+    !hasSpaNavigated ? win.ytInitialData : null,
   ].filter(Boolean);
 
   let channelId: string | undefined;
@@ -553,15 +660,12 @@ function inspectChannelPage(): void {
   let channelName: string | undefined;
   const yppSignals = new Set<YppSignal>();
 
-  for (const src of sources) {
-    if (!channelId || !handle || !channelName) {
-      const extracted = extractFromCardData(src);
-      if (!channelId && extracted.channelId) channelId = extracted.channelId;
-      if (!handle && extracted.handle) handle = extracted.handle;
-      if (!channelName && extracted.channelName) channelName = extracted.channelName;
-    }
+  if (location.pathname.startsWith('/channel/')) {
+    const seg = location.pathname.split('/')[2];
+    if (seg && CHANNEL_ID_RE.test(seg)) channelId = seg;
+  }
 
-    // Check channel metadata header fields explicitly
+  for (const src of sources) {
     if (isObj(src) && isObj(src.metadata) && isObj(src.metadata.channelMetadataRenderer)) {
       const meta = src.metadata.channelMetadataRenderer;
       if (!channelId && typeof meta.externalId === 'string' && CHANNEL_ID_RE.test(meta.externalId)) {
@@ -575,30 +679,32 @@ function inspectChannelPage(): void {
         if (h) handle = h;
       }
     }
+  }
+
+  for (const src of sources) {
+    if (!channelId || !handle || !channelName) {
+      const extracted = extractFromCardData(src, 12);
+      if (!channelId && extracted.channelId) channelId = extracted.channelId;
+      if (!handle && extracted.handle) handle = extracted.handle;
+      if (!channelName && extracted.channelName) channelName = extracted.channelName;
+    }
 
     const scan = scanTelemetrySignals(src);
     for (const sig of scan.yppSignals) yppSignals.add(sig);
   }
 
-  detectDomYppAndPromo(yppSignals);
-
-  if (!channelId && location.pathname.startsWith('/channel/')) {
-    const seg = location.pathname.split('/')[2];
-    if (seg && CHANNEL_ID_RE.test(seg)) channelId = seg;
-  }
+  detectDomYppAndPromo(yppSignals, 'channel');
 
   if (!channelId && !handle) return;
 
-  const detail: ChannelPageInfo = {
+  dispatchChannelInfo({
+    urlPath: location.pathname,
     channelId,
     handle,
     channelName,
     yppSignals: Array.from(yppSignals),
     monetizationInspected: Boolean(headerEl || browseEl || sources.length > 0),
-  };
-
-  document.documentElement.dataset.ngChannelInfo = JSON.stringify(detail);
-  document.dispatchEvent(new CustomEvent('noisegate:channel-info', { detail }));
+  });
 }
 
 function inspectAll(): void {
@@ -607,8 +713,17 @@ function inspectAll(): void {
   inspectChannelPage();
 }
 
+function clearBridgeRouteCache(): void {
+  lastNavigateResponse = null;
+  lastPlayerResponse = null;
+  lastSerializedWatchInfo = '';
+  lastSerializedChannelInfo = '';
+  delete document.documentElement.dataset.ngWatchInfo;
+  delete document.documentElement.dataset.ngChannelInfo;
+}
+
 export default defineContentScript({
-  matches: ['*://*.youtube.com/*'],
+  matches: ['*://www.youtube.com/*', '*://m.youtube.com/*'],
   world: 'MAIN',
   runAt: 'document_start',
   main() {
@@ -616,7 +731,27 @@ export default defineContentScript({
       inspectAll();
     });
 
+    window.addEventListener('yt-navigate-start', () => {
+      hasSpaNavigated = true;
+      if (pendingNavTimer !== null) {
+        window.clearTimeout(pendingNavTimer);
+        pendingNavTimer = null;
+      }
+      clearBridgeRouteCache();
+    });
+
+    window.addEventListener('popstate', () => {
+      hasSpaNavigated = true;
+      if (pendingNavTimer !== null) {
+        window.clearTimeout(pendingNavTimer);
+        pendingNavTimer = null;
+      }
+      clearBridgeRouteCache();
+      pendingNavTimer = window.setTimeout(inspectAll, 250);
+    });
+
     window.addEventListener('yt-navigate-finish', (evt: Event) => {
+      hasSpaNavigated = true;
       const custom = evt as CustomEvent<{
         response?: { response?: unknown; playerResponse?: unknown };
       }>;
@@ -624,13 +759,24 @@ export default defineContentScript({
         lastNavigateResponse = custom.detail.response.response;
       } else if (custom.detail?.response) {
         lastNavigateResponse = custom.detail.response;
-      }
-      if (custom.detail?.response?.playerResponse) {
-        lastPlayerResponse = custom.detail.response.playerResponse;
+      } else {
+        lastNavigateResponse = null;
       }
 
+      if (custom.detail?.response?.playerResponse) {
+        lastPlayerResponse = custom.detail.response.playerResponse;
+      } else {
+        lastPlayerResponse = null;
+      }
+
+      if (pendingNavTimer !== null) {
+        window.clearTimeout(pendingNavTimer);
+      }
       inspectAll();
-      setTimeout(inspectAll, 450);
+      pendingNavTimer = window.setTimeout(() => {
+        pendingNavTimer = null;
+        inspectAll();
+      }, 450);
     });
 
     window.addEventListener('yt-page-data-updated', () => {
